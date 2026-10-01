@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.cache/
+test-results/
+playwright-report/
+
+# Local questionnaire checkout; preserve the portable patch instead.
+/integrations/rpiv-mono/
+
+# Local development handoff, not project documentation.
+/docs/implementation-checkpoint.md
+
+.DS_Store
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example

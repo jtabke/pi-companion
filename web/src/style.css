@@ -1,0 +1,150 @@
+:root {
+	color-scheme: light dark;
+	font-family: system-ui, sans-serif;
+	line-height: 1.5;
+	background: light-dark(#f4f5f7, #16191d);
+	color: light-dark(#16191d, #f4f5f7);
+}
+* {
+	box-sizing: border-box;
+}
+body {
+	margin: 0;
+}
+main {
+	max-width: 800px;
+	margin: auto;
+	padding: max(12px, env(safe-area-inset-top))
+		max(12px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom))
+		max(12px, env(safe-area-inset-left));
+	overflow-wrap: anywhere;
+}
+h1 {
+	font-size: 1.4rem;
+}
+h2 {
+	font-size: 1.15rem;
+}
+h3 {
+	font-size: 1rem;
+}
+header,
+article,
+form,
+.sessions {
+	padding: 12px;
+	margin-bottom: 12px;
+	border: 1px solid #80808070;
+	border-radius: 8px;
+	background: light-dark(white, #20252a);
+}
+button,
+input,
+select,
+summary {
+	font: inherit;
+	min-height: 44px;
+}
+button {
+	cursor: pointer;
+	padding: 8px 12px;
+}
+input,
+select {
+	display: block;
+	width: 100%;
+	margin: 8px 0;
+}
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+select:focus-visible {
+	outline: 3px solid #4285f4;
+	outline-offset: 3px;
+}
+.image {
+	display: block;
+	max-width: 100%;
+	width: 100%;
+	background: none;
+	border: 1px solid #80808070;
+	border-radius: 6px;
+}
+.image img {
+	display: block;
+	width: auto;
+	height: auto;
+	max-width: 100%;
+	max-height: 500px;
+	margin: auto;
+}
+.image span {
+	display: block;
+}
+pre {
+	overflow: auto;
+	max-width: 100%;
+	padding: 8px;
+}
+table {
+	display: block;
+	overflow: auto;
+}
+details {
+	margin: 8px 0;
+}
+p {
+	margin: 8px 0;
+}
+.re-pair {
+	margin-bottom: 12px;
+}
+.pswp {
+	--pswp-bg: #101216;
+}
+@media (prefers-reduced-motion: reduce) {
+	* {
+		animation: none !important;
+		transition: none !important;
+	}
+}
+.composer {
+	padding: 12px;
+	margin-bottom: 12px;
+	border: 1px solid #80808070;
+	border-radius: 8px;
+}
+.composer label {
+	display: block;
+	margin-top: 12px;
+}
+textarea {
+	font: inherit;
+	display: block;
+	width: 100%;
+	min-height: 110px;
+	resize: vertical;
+	margin: 8px 0;
+}
+textarea:focus-visible {
+	outline: 3px solid #4285f4;
+	outline-offset: 3px;
+}
+button:disabled {
+	cursor: not-allowed;
+	opacity: 0.6;
+}
+
+.attachment img { display: block; max-width: 100%; max-height: 220px; object-fit: contain; }
+.attachment p { overflow-wrap: anywhere; }
+.composer input[type="file"] { max-width: 100%; }
+
+.questions fieldset { min-width: 0; margin: 1rem 0; }
+.questions label { display: block; }
+.questions textarea, .questions select { width: 100%; box-sizing: border-box; }
+.question-option { margin: 1rem 0; }
+.question-option label { display: flex; align-items: center; min-height: 44px; gap: .5rem; }
+.question-option input { width: 24px; height: 24px; flex-shrink: 0; }
+.question-preview { border: 1px solid currentColor; padding: .5rem; overflow-wrap: anywhere; }
+.question-preview pre { overflow-x: auto; max-width: 100%; }

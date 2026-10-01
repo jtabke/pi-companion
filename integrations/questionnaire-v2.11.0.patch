@@ -1,0 +1,1130 @@
+diff --git a/packages/rpiv-ask-user-question/README.md b/packages/rpiv-ask-user-question/README.md
+index e4bfa0d..0ff9cce 100644
+--- a/packages/rpiv-ask-user-question/README.md
++++ b/packages/rpiv-ask-user-question/README.md
+@@ -51,6 +51,7 @@ Optional. Settings live in `~/.config/rpiv-ask-user-question/config.json`; the f
+ 
+ | Setting | What it does | Default |
+ | --- | --- | --- |
++| `companionReplies` | Opt-in public full-content/reply events for the same terminal questionnaire; see [reply API](docs/companion-replies.md). Read-only, requires exactly `true`. | `false` |
+ | `collapseKey` | Key that collapses and expands the dialog. Accepts Pi keybinding ids such as `alt+o`; `"off"` disables the shortcut. | `"ctrl+]"` |
+ | `guidance.description` | Full replacement for the tool description the model sees. A non-empty string replaces the built-in text entirely — no merging. | built-in description |
+ | `guidance.promptSnippet` | One-line description of the tool in the system prompt — tune how eagerly the model asks. | built-in snippet |
+@@ -64,6 +65,8 @@ Malformed JSON falls back to the defaults with a warning; an individual unusable
+ 
+ ## Reference
+ 
++- [Companion reply API](docs/companion-replies.md) — opt-in versioned request, reply, outcome and closure events; terminal completion remains available.
++
+ - [Tool schema](https://github.com/juicesharp/rpiv-mono/blob/main/packages/rpiv-ask-user-question/docs/tool-schema.md) — parameters, limits, reserved labels, validation errors, the result envelope, and the `rpiv:ask-user:prompt` event.
+ - [Keyboard and layout](https://github.com/juicesharp/rpiv-mono/blob/main/packages/rpiv-ask-user-question/docs/keyboard.md) — every key, the rows the dialog appends, notes, collapse mode, and how previews and overflow adapt to terminal size.
+ - [Configuration](https://github.com/juicesharp/rpiv-mono/blob/main/packages/rpiv-ask-user-question/docs/configuration.md) — file lookup and `XDG_CONFIG_HOME`, the `collapseKey` grammar, the `guidance.*` prompt overrides, and how invalid values are handled.
+diff --git a/packages/rpiv-ask-user-question/ask-user-question.ts b/packages/rpiv-ask-user-question/ask-user-question.ts
+index a1e17e5..7208c61 100644
+--- a/packages/rpiv-ask-user-question/ask-user-question.ts
++++ b/packages/rpiv-ask-user-question/ask-user-question.ts
+@@ -1,5 +1,6 @@
+ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+ import { isKeyRelease, isKeyRepeat, matchesKey, type OverlayHandle, type TUI } from "@earendil-works/pi-tui";
++import { CompanionReplies } from "./companion-replies.js";
+ import {
+ 	COLLAPSE_KEY_OFF,
+ 	formatKeySpecForDisplay,
+@@ -192,8 +193,9 @@ function makeSessionFactory(config: {
+ 	canReopenWhileHidden: boolean;
+ 	sessionRef: SessionRef;
+ 	Session: SessionModule["QuestionnaireSession"];
++	replies?: CompanionReplies;
+ }) {
+-	const { ctx, typed, itemsByTab, collapseKey, canReopenWhileHidden, sessionRef, Session } = config;
++	const { ctx, typed, itemsByTab, collapseKey, canReopenWhileHidden, sessionRef, Session, replies } = config;
+ 	return (
+ 		tui: TUI,
+ 		theme: Theme,
+@@ -205,7 +207,7 @@ function makeSessionFactory(config: {
+ 			theme,
+ 			params: typed,
+ 			itemsByTab,
+-			done,
++			done: replies ? (result) => replies.terminal(result) : done,
+ 			keybindings,
+ 			editInput: async (value) => {
+ 				try {
+@@ -228,6 +230,7 @@ function makeSessionFactory(config: {
+ 			canReopenWhileHidden,
+ 		});
+ 		sessionRef.current = session;
++		replies?.bind(done);
+ 		return session.component;
+ 	};
+ }
+@@ -301,7 +304,15 @@ Use the optional \`preview\` field on options when presenting concrete artifacts
+ Preview content is rendered as markdown in a monospace box. Multi-line text with newlines is supported. When any option has a preview, the UI switches to a side-by-side layout with a vertical option list on the left and preview on the right. Do not use previews for simple preference questions where labels and descriptions suffice. Note: previews are only supported for single-select questions (not multiSelect).`;
+ 
+ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
+-	const guidance = validateGuidanceFields(loadConfig().guidance);
++	const config = loadConfig();
++	const guidance = validateGuidanceFields(config.guidance);
++	const companionReplies = config.companionReplies === true;
++	const pendingReplies = new Set<CompanionReplies>();
++	if (companionReplies) {
++		pi.on("session_shutdown", () => {
++			for (const replies of pendingReplies) replies.cancel("shutdown");
++		});
++	}
+ 	pi.registerTool({
+ 		name: ASK_USER_QUESTION_TOOL_NAME,
+ 		label: "Ask User Question",
+@@ -339,69 +350,84 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
+ 				return runRpcPath(pi, ctx.ui, typed);
+ 			}
+ 
+-			const itemsByTab: WrappingSelectItem[][] = typed.questions.map((q) => buildItemsForQuestion(q));
+-
+-			// Lazy — QuestionnaireSession pulls the ~560ms view/TUI render graph;
+-			// load it only when the tool runs, not at extension registration.
+-			const sessionLoad = await loadQuestionnaireSession();
+-			if (!sessionLoad.ok) {
+-				return buildToolResult(sessionLoad.message, { answers: [], cancelled: true, error: sessionLoad.error });
+-			}
+-			const { QuestionnaireSession } = sessionLoad.module;
+-			// Resolve the collapse/expand key spec from config. Default is `ctrl+]`; users
+-			// with non-US layouts (e.g. Latin American, where `]` is shifted) can override
+-			// via the `collapseKey` config field. `resolveCollapseKey` also accepts the
+-			// sentinel value `"off"` to disable the shortcut entirely.
+-			const collapseKey = resolveCollapseKey(loadConfig());
+-
+-			// Capture the overlay handle so the session can call `setHidden()` when the
+-			// user toggles collapse, and register a raw terminal input listener for the
+-			// same key so the toggle still works while the overlay is hidden (pi-tui does
+-			// not route input to a hidden overlay's `component.handleInput`).
+-			const sessionRef: SessionRef = { current: null };
+-			const overlayHandleRef: OverlayHandleRef = { current: undefined };
+-			const removeOverlayInputListener = registerCollapseKeyListener(ctx, collapseKey, sessionRef, overlayHandleRef);
+-			// Hiding the overlay is only reversible through the raw listener above, so
+-			// the session may emit `setHidden` only when it was actually registered;
+-			// otherwise collapse falls back to the visible one-line row.
+-			const canReopenWhileHidden = removeOverlayInputListener !== undefined;
+-
+-			emitAskUserBlockedEvent(pi, true);
++			const replies = companionReplies && ctx.mode === "tui" ? new CompanionReplies(pi, typed, _signal) : undefined;
++			if (replies) pendingReplies.add(replies);
+ 			try {
+-				emitTerminalAttention();
+-				const result = await ctx.ui.custom<QuestionnaireResult>(
+-					makeSessionFactory({
+-						ctx,
+-						typed,
+-						itemsByTab,
+-						collapseKey,
+-						canReopenWhileHidden,
+-						sessionRef,
+-						Session: QuestionnaireSession,
+-					}),
+-					{
+-						overlay: true,
+-						overlayOptions: {
+-							anchor: "bottom-center",
+-							width: "100%",
+-							maxHeight: "100%",
+-							margin: { left: 0, right: 0, bottom: 0 },
+-						},
+-						onHandle: (handle) => {
+-							overlayHandleRef.current = handle;
+-							sessionRef.current?.setOverlayHandle(handle);
+-						},
+-					},
++				const itemsByTab: WrappingSelectItem[][] = typed.questions.map((q) => buildItemsForQuestion(q));
++
++				// Lazy — QuestionnaireSession pulls the ~560ms view/TUI render graph;
++				// load it only when the tool runs, not at extension registration.
++				const sessionLoad = await loadQuestionnaireSession();
++				if (replies?.completedResult) return buildQuestionnaireResponse(replies.completedResult, typed);
++				if (!sessionLoad.ok) {
++					return buildToolResult(sessionLoad.message, { answers: [], cancelled: true, error: sessionLoad.error });
++				}
++				const { QuestionnaireSession } = sessionLoad.module;
++				// Resolve the collapse/expand key spec from config. Default is `ctrl+]`; users
++				// with non-US layouts (e.g. Latin American, where `]` is shifted) can override
++				// via the `collapseKey` config field. `resolveCollapseKey` also accepts the
++				// sentinel value `"off"` to disable the shortcut entirely.
++				const collapseKey = resolveCollapseKey(loadConfig());
++
++				// Capture the overlay handle so the session can call `setHidden()` when the
++				// user toggles collapse, and register a raw terminal input listener for the
++				// same key so the toggle still works while the overlay is hidden (pi-tui does
++				// not route input to a hidden overlay's `component.handleInput`).
++				const sessionRef: SessionRef = { current: null };
++				const overlayHandleRef: OverlayHandleRef = { current: undefined };
++				const removeOverlayInputListener = registerCollapseKeyListener(
++					ctx,
++					collapseKey,
++					sessionRef,
++					overlayHandleRef,
+ 				);
++				// Hiding the overlay is only reversible through the raw listener above, so
++				// the session may emit `setHidden` only when it was actually registered;
++				// otherwise collapse falls back to the visible one-line row.
++				const canReopenWhileHidden = removeOverlayInputListener !== undefined;
+ 
+-				if (result === undefined) {
+-					return resolveUndefinedResult(ctx, typed);
+-				}
++				emitAskUserBlockedEvent(pi, true);
++				try {
++					emitTerminalAttention();
++					const result = await ctx.ui.custom<QuestionnaireResult>(
++						makeSessionFactory({
++							ctx,
++							typed,
++							itemsByTab,
++							collapseKey,
++							canReopenWhileHidden,
++							sessionRef,
++							Session: QuestionnaireSession,
++							replies,
++						}),
++						{
++							overlay: true,
++							overlayOptions: {
++								anchor: "bottom-center",
++								width: "100%",
++								maxHeight: "100%",
++								margin: { left: 0, right: 0, bottom: 0 },
++							},
++							onHandle: (handle) => {
++								overlayHandleRef.current = handle;
++								sessionRef.current?.setOverlayHandle(handle);
++								if (sessionRef.current) replies?.ready();
++							},
++						},
++					);
++
++					if (result === undefined) {
++						return resolveUndefinedResult(ctx, typed);
++					}
+ 
+-				return buildQuestionnaireResponse(result, typed);
++					return buildQuestionnaireResponse(result, typed);
++				} finally {
++					removeOverlayInputListener?.();
++					emitAskUserBlockedEvent(pi, false);
++				}
+ 			} finally {
+-				removeOverlayInputListener?.();
+-				emitAskUserBlockedEvent(pi, false);
++				replies?.close();
++				if (replies) pendingReplies.delete(replies);
+ 			}
+ 		},
+ 	});
+diff --git a/packages/rpiv-ask-user-question/config.ts b/packages/rpiv-ask-user-question/config.ts
+index 5c64569..b6efd6d 100644
+--- a/packages/rpiv-ask-user-question/config.ts
++++ b/packages/rpiv-ask-user-question/config.ts
+@@ -9,6 +9,8 @@ export const COLLAPSE_KEY_OFF: CollapseKeySpec = "off";
+ 
+ export interface AskUserQuestionConfig {
+ 	guidance?: GuidanceFields;
++	/** Explicit opt-in to the full-content TUI companion event/reply contract. Default false. */
++	companionReplies?: boolean;
+ 	/**
+ 	 * Key spec for the collapse/expand shortcut, in the same format as pi-coding-agent
+ 	 * keybinding ids (`modifier+key`, e.g. `ctrl+]`, `alt+o`, `ctrl+shift+h`). Defaults
+diff --git a/packages/rpiv-ask-user-question/docs/configuration.md b/packages/rpiv-ask-user-question/docs/configuration.md
+index 9e7d347..f5ece26 100644
+--- a/packages/rpiv-ask-user-question/docs/configuration.md
++++ b/packages/rpiv-ask-user-question/docs/configuration.md
+@@ -58,11 +58,22 @@ type are likewise dropped back to their default without a warning.
+ 
+ | Setting | What it does | Default |
+ | --- | --- | --- |
++| `companionReplies` | Enables the full-content TUI companion reply API. | `false` |
+ | `collapseKey` | Key that collapses and expands the dialog overlay. | `"ctrl+]"` |
+ | `guidance.description` | Full text of the tool description the model sees. Replaces the built-in default entirely — no merging. | built-in description |
+ | `guidance.promptSnippet` | One-line snippet describing the tool in the system prompt. | built-in snippet |
+ | `guidance.promptGuidelines` | List of usage guidelines given to the model. | 4 built-in guidelines |
+ 
++### `companionReplies`
++
++Set `"companionReplies": true` to enable the [public reply API](./companion-replies.md).
++Only the boolean `true` opts in; missing, false, strings and other values remain off.
++Read once at tool registration, so restart/reload Pi after changing it. The package
++never writes this file. This authorizes full question/description/preview disclosure
++to trusted local event-bus subscribers and permits their replies. No transport or
++authentication is provided. RPC, unknown-mode and unrendered custom hosts never
++publish these sensitive events, even with the setting enabled.
++
+ ### `collapseKey`
+ 
+ The value uses Pi's keybinding id format: zero or more distinct modifiers from `ctrl`,
+diff --git a/packages/rpiv-ask-user-question/docs/hosts.md b/packages/rpiv-ask-user-question/docs/hosts.md
+index 74cfa97..4ec8f8d 100644
+--- a/packages/rpiv-ask-user-question/docs/hosts.md
++++ b/packages/rpiv-ask-user-question/docs/hosts.md
+@@ -95,3 +95,21 @@ When it does happen, you get a structured envelope rather than a raw `TypeError`
+ 
+ Both messages tell the model the questions were never shown and to ask them as plain chat
+ text instead of treating the failure as a decline.
++
++## Opt-in companion replies
++
++With `companionReplies: true`, the actual terminal overlay can also be answered through
++the [public event API](./companion-replies.md). Requests are published only for
++`ctx.mode === "tui"`, after successful component construction/completion binding and
++Pi's public `onHandle` notification that the overlay is shown. Terminal answers and
++validated external answers share the existing `done` callback and are arbitrated once.
++The callback dismisses the overlay; no editor or `ctx.ui` replacement is used.
++RPC/default-off behavior and legacy notification timing/payloads are unchanged.
++
++The tool abort signal and public `session_shutdown` cancel an opted-in invocation via
++the existing cancellation envelope, remove its reply listener, and suppress any pending
++publication. Cancellation during lazy loading skips UI creation; cancellation after construction
++but before overlay readiness is delivered only after mounting (Pi's callback removes
++that overlay). Every published invocation emits one
++closure, including custom-UI errors; abrupt process death cannot emit a closure.
++Client unsubscription/disconnect has no effect on terminal completion.
+diff --git a/packages/rpiv-ask-user-question/docs/tool-schema.md b/packages/rpiv-ask-user-question/docs/tool-schema.md
+index d7f8866..a761eb1 100644
+--- a/packages/rpiv-ask-user-question/docs/tool-schema.md
++++ b/packages/rpiv-ask-user-question/docs/tool-schema.md
+@@ -106,7 +106,7 @@ in `details.globalNote`.
+ 
+ ## Event contract
+ 
+-The package publishes one event on Pi's event bus, emitted after validation passes and
++The legacy prompt event is emitted on Pi's event bus after validation passes and
+ before the dialog is shown. Import it from the `/events` subpath:
+ 
+ ```ts
+@@ -125,3 +125,8 @@ process or network boundary stay cheap.
+ Stability policy for the `rpiv:*` namespace: channel names are immutable, payload changes
+ are append-only and always optional, payloads stay JSON-safe, and any breaking change ships
+ as a new channel (e.g. `rpiv:ask-user:prompt.v2`) rather than a version field.
++
++The legacy `rpiv:ask-user:blocked` event brackets TUI and RPC waits with
++`{ active: true }` / `{ active: false }`; false includes cancellation and errors.
++These notifications are unchanged. See [companion replies](./companion-replies.md)
++for the separate, default-off, full-preview request and validated reply interface.
+diff --git a/packages/rpiv-ask-user-question/events.ts b/packages/rpiv-ask-user-question/events.ts
+index c55d130..2faa3f5 100644
+--- a/packages/rpiv-ask-user-question/events.ts
++++ b/packages/rpiv-ask-user-question/events.ts
+@@ -57,3 +57,47 @@ export interface AskUserPromptOption {
+ 	/** True iff the option carries rich preview content (content not shipped). */
+ 	hasPreview: boolean;
+ }
++
++/** Opt-in full-content request, only after the actual TUI overlay is ready. */
++export const ASK_USER_REQUEST_EVENT = "rpiv:ask-user:request.v1" as const;
++export const ASK_USER_REPLY_EVENT = "rpiv:ask-user:reply.v1" as const;
++export const ASK_USER_REPLY_OUTCOME_EVENT = "rpiv:ask-user:reply-outcome.v1" as const;
++export const ASK_USER_CLOSED_EVENT = "rpiv:ask-user:closed.v1" as const;
++export const ASK_USER_REPLY_MAX_BYTES = 65536;
++export const ASK_USER_REPLY_MAX_TEXT_LENGTH = 8192;
++
++export interface AskUserRequestEventPayload {
++	invocationId: string;
++	questions: ReadonlyArray<{
++		question: string;
++		header: string;
++		multiSelect: boolean;
++		options: ReadonlyArray<{ label: string; description: string; preview?: string }>;
++	}>;
++}
++export type AskUserReplyAnswer = {
++	questionIndex: number;
++	notes?: string;
++} & (
++	| { kind: "option"; answer: string }
++	| { kind: "custom"; answer: string | null }
++	| { kind: "multi"; answer: null; selected: string[] }
++);
++export interface AskUserReplyEventPayload {
++	invocationId: string;
++	/** Non-empty client correlation ID, at most 128 UTF-16 code units. */
++	replyId: string;
++	cancelled: boolean;
++	answers: AskUserReplyAnswer[];
++	globalNote?: string;
++}
++export interface AskUserReplyOutcomeEventPayload {
++	invocationId: string;
++	replyId: string;
++	accepted: boolean;
++	reason?: "invalid_reply";
++}
++export interface AskUserClosedEventPayload {
++	invocationId: string;
++	reason: "terminal" | "external" | "aborted" | "shutdown" | "ended";
++}
+diff --git a/packages/rpiv-ask-user-question/index.ts b/packages/rpiv-ask-user-question/index.ts
+index 08687a9..8aa70d8 100644
+--- a/packages/rpiv-ask-user-question/index.ts
++++ b/packages/rpiv-ask-user-question/index.ts
+@@ -39,14 +39,7 @@ try {
+ 	// SDK absent — extension still loads with English-only UI.
+ }
+ 
+-export {
+-	ASK_USER_BLOCKED_EVENT,
+-	ASK_USER_PROMPT_EVENT,
+-	type AskUserBlockedEventPayload,
+-	type AskUserPromptEventPayload,
+-	type AskUserPromptOption,
+-	type AskUserPromptQuestion,
+-} from "./events.js";
++export * from "./events.js";
+ 
+ export default function (pi: ExtensionAPI) {
+ 	registerAskUserQuestionTool(pi);
+diff --git a/packages/rpiv-ask-user-question/package.json b/packages/rpiv-ask-user-question/package.json
+index a9f5e26..0dd326e 100644
+--- a/packages/rpiv-ask-user-question/package.json
++++ b/packages/rpiv-ask-user-question/package.json
+@@ -31,6 +31,7 @@
+ 	},
+ 	"files": [
+ 		"ask-user-question.ts",
++		"companion-replies.ts",
+ 		"rpc-fallback.ts",
+ 		"config.ts",
+ 		"events.ts",
+diff --git a/packages/rpiv-ask-user-question/companion-replies.test.ts b/packages/rpiv-ask-user-question/companion-replies.test.ts
+new file mode 100644
+index 0000000..88f13af
+--- /dev/null
++++ b/packages/rpiv-ask-user-question/companion-replies.test.ts
+@@ -0,0 +1,386 @@
++import { EventEmitter } from "node:events";
++import { mkdirSync, writeFileSync } from "node:fs";
++import { join } from "node:path";
++import { getKeybindings } from "@earendil-works/pi-tui";
++import { createMockCtx, createMockPi } from "@juicesharp/rpiv-test-utils";
++import { describe, expect, it, vi } from "vitest";
++import { registerAskUserQuestionTool } from "./ask-user-question.js";
++import { CompanionReplies, validateCompanionReply } from "./companion-replies.js";
++import {
++	type AskUserRequestEventPayload,
++	ASK_USER_CLOSED_EVENT as CLOSED,
++	ASK_USER_REPLY_OUTCOME_EVENT as OUTCOME,
++	ASK_USER_REPLY_EVENT as REPLY,
++	ASK_USER_REQUEST_EVENT as REQUEST,
++} from "./events.js";
++import type { QuestionnaireResult, QuestionParams } from "./tool/types.js";
++
++const params: QuestionParams = {
++	questions: [
++		{
++			question: "Which?",
++			header: "Pick",
++			options: [
++				{ label: "A", description: "First", preview: "authored preview" },
++				{ label: "B", description: "Second" },
++			],
++		},
++		{
++			question: "Many?",
++			header: "Many",
++			multiSelect: true,
++			options: [
++				{ label: "C", description: "Third" },
++				{ label: "D", description: "Fourth" },
++			],
++		},
++	],
++};
++const option = { questionIndex: 0, kind: "option", answer: "A" };
++const reply = { cancelled: false, answers: [option] };
++const cancelled: QuestionnaireResult = { cancelled: true, answers: [] };
++function bus() {
++	const emitter = new EventEmitter();
++	const emitted: Array<[string, unknown]> = [];
++	return {
++		emitter,
++		emitted,
++		emit: (channel: string, value: unknown) => {
++			emitted.push([channel, value]);
++			emitter.emit(channel, value);
++		},
++		on: (channel: string, handler: (value: unknown) => void) => {
++			emitter.on(channel, handler);
++			return () => {
++				emitter.off(channel, handler);
++			};
++		},
++	};
++}
++
++describe("validateCompanionReply — canonical owner data", () => {
++	it("rejects unserializable payloads and oversized notes", () => {
++		const circular: Record<string, unknown> = { ...reply };
++		circular.self = circular;
++		expect(validateCompanionReply(circular, params)).toBeUndefined();
++		expect(
++			validateCompanionReply(
++				{ ...reply, answers: [{ questionIndex: 1, kind: "multi", answer: null, selected: Array(1) }] },
++				params,
++			),
++		).toBeUndefined();
++		expect(
++			validateCompanionReply({ ...reply, answers: [{ ...option, notes: "x".repeat(8193) }] }, params),
++		).toBeUndefined();
++	});
++	it("reconstructs question/preview, supports custom/multi, notes, partial submit and cancel", () => {
++		expect(
++			validateCompanionReply(
++				{
++					...reply,
++					answers: [{ ...option, question: "forged", preview: "forged", notes: "note" }],
++					globalNote: "global",
++				},
++				params,
++			),
++		).toEqual({
++			cancelled: false,
++			answers: [{ ...option, question: "Which?", preview: "authored preview", notes: "note" }],
++			globalNote: "global",
++		});
++		expect(
++			validateCompanionReply(
++				{ cancelled: true, answers: [{ questionIndex: 1, kind: "multi", answer: null, selected: ["D", "C"] }] },
++				params,
++			),
++		).toEqual({
++			cancelled: true,
++			answers: [{ questionIndex: 1, question: "Many?", kind: "multi", answer: null, selected: ["D", "C"] }],
++		});
++		for (const answer of ["typed\ntext", "", null]) {
++			expect(
++				validateCompanionReply({ ...reply, answers: [{ questionIndex: 1, kind: "custom", answer }] }, params)
++					?.answers[0].answer,
++			).toBe(answer);
++		}
++		expect(validateCompanionReply({ cancelled: false, answers: [], globalNote: "global" }, params)).toEqual({
++			cancelled: false,
++			answers: [],
++			globalNote: "global",
++		});
++		expect(validateCompanionReply({ cancelled: true, answers: [], globalNote: "  " }, params)).toEqual(cancelled);
++	});
++	it.each([
++		{ ...reply, answers: [{ ...option, questionIndex: -1 }] },
++		{ ...reply, answers: [{ ...option, questionIndex: 0.5 }] },
++		{ ...reply, answers: [{ ...option, questionIndex: 2 }] },
++		{ ...reply, answers: [option, option] },
++		{ ...reply, answers: [{ ...option, answer: "a" }] },
++		{ ...reply, answers: [{ ...option, questionIndex: 1 }] },
++		{ ...reply, answers: [{ ...option, kind: "multi", answer: null, selected: [] }] },
++		{ ...reply, answers: [{ questionIndex: 1, kind: "multi", answer: null, selected: ["C", "C"] }] },
++		{ ...reply, answers: [{ questionIndex: 1, kind: "multi", answer: null, selected: ["unknown"] }] },
++		{ ...reply, answers: [{ ...option, kind: "custom", answer: 42 }] },
++		{ ...reply, answers: [{ ...option, kind: "custom", answer: "x".repeat(8193) }] },
++		{ ...reply, globalNote: 1 },
++		{ ...reply, globalNote: "x".repeat(8193) },
++		{ ...reply, answers: [{ ...option, notes: {} }] },
++		{ ...reply, extra: "x".repeat(65536) },
++		{ ...reply, cancelled: "false" },
++		{ ...reply, answers: [{ ...option, kind: "other" }] },
++		null,
++	])("rejects malformed, unowned or oversized reply %#", (value) => {
++		expect(validateCompanionReply(value, params)).toBeUndefined();
++	});
++});
++
++describe("CompanionReplies — once-only completion", () => {
++	it("does not resolve another concurrent invocation, including attempts with a closed ID", () => {
++		const events = bus();
++		const { pi } = createMockPi({ events });
++		const first = new CompanionReplies(pi, params);
++		const second = new CompanionReplies(pi, params);
++		const firstDone = vi.fn();
++		const secondDone = vi.fn();
++		first.bind(firstDone);
++		first.ready();
++		second.bind(secondDone);
++		second.ready();
++		events.emit(REPLY, { ...reply, invocationId: first.invocationId, replyId: "first" });
++		expect(firstDone).toHaveBeenCalledOnce();
++		expect(secondDone).not.toHaveBeenCalled();
++		events.emit(REPLY, { ...reply, invocationId: first.invocationId, replyId: "stale" });
++		expect(secondDone).not.toHaveBeenCalled();
++		expect(events.emitter.listenerCount(REPLY)).toBe(1);
++		second.terminal(cancelled);
++		expect(secondDone).toHaveBeenCalledOnce();
++		expect(events.emitter.listenerCount(REPLY)).toBe(0);
++	});
++	it.each(["external", "terminal"] as const)(
++		"arbitrates %s winner, reentrancy, duplicate/stale and listener cleanup",
++		(winner) => {
++			const events = bus();
++			const { pi } = createMockPi({ events });
++			const owner = new CompanionReplies(pi, params);
++			const done = vi.fn(() => {
++				owner.terminal(cancelled);
++				events.emit(REPLY, { ...reply, invocationId: owner.invocationId, replyId: "reentrant" });
++			});
++			owner.bind(done);
++			owner.ready();
++			owner.ready();
++			expect(events.emitted.filter(([c]) => c === REQUEST)).toHaveLength(1);
++			events.emit(REPLY, { ...reply, invocationId: "unknown", replyId: "stale" });
++			events.emit(REPLY, { ...reply, invocationId: owner.invocationId, replyId: "bad", answers: [option, option] });
++			expect(done).not.toHaveBeenCalled();
++			if (winner === "terminal") owner.terminal(cancelled);
++			else events.emit(REPLY, { ...reply, invocationId: owner.invocationId, replyId: "good" });
++			owner.terminal(cancelled);
++			events.emit(REPLY, { ...reply, invocationId: owner.invocationId, replyId: "late" });
++			owner.close();
++			expect(done).toHaveBeenCalledOnce();
++			expect(events.emitter.listenerCount(REPLY)).toBe(0);
++			expect(events.emitted.filter(([c]) => c === CLOSED)).toEqual([
++				[CLOSED, { invocationId: owner.invocationId, reason: winner }],
++			]);
++			expect(events.emitted.filter(([c]) => c === OUTCOME).map(([, p]) => p)).toEqual([
++				{ invocationId: owner.invocationId, replyId: "bad", accepted: false, reason: "invalid_reply" },
++				...(winner === "external" ? [{ invocationId: owner.invocationId, replyId: "good", accepted: true }] : []),
++			]);
++		},
++	);
++	it("abort before binding suppresses publication and uses normal cancel once", () => {
++		const events = bus();
++		const { pi } = createMockPi({ events });
++		const controller = new AbortController();
++		const owner = new CompanionReplies(pi, params, controller.signal);
++		controller.abort();
++		const done = vi.fn();
++		owner.bind(done);
++		expect(done).not.toHaveBeenCalled();
++		owner.ready();
++		owner.close();
++		expect(done).toHaveBeenCalledExactlyOnceWith(cancelled);
++		expect(events.emitted).toEqual([]);
++	});
++});
++
++const theme = {
++	fg: (_: string, s: string) => s,
++	bg: (_: string, s: string) => s,
++	bold: (s: string) => s,
++	strikethrough: (s: string) => s,
++};
++function optIn(value: unknown) {
++	const dir = join(process.env.HOME!, ".config", "rpiv-ask-user-question");
++	mkdirSync(dir, { recursive: true });
++	writeFileSync(join(dir, "config.json"), JSON.stringify({ companionReplies: value }));
++}
++
++describe("ask-user-question — actual factory/readiness integration", () => {
++	it.each(["abort", "shutdown"])("suppresses UI and publication if %s happens during lazy loading", async (exit) => {
++		optIn(true);
++		const events = bus();
++		const { pi, captured } = createMockPi({ events });
++		registerAskUserQuestionTool(pi);
++		const custom = vi.fn();
++		const ctx = createMockCtx({ hasUI: true, mode: "tui", ui: { custom } });
++		const controller = new AbortController();
++		const result = captured.tools
++			.get("ask_user_question")!
++			.execute("test", params, controller.signal, undefined, ctx as never);
++		if (exit === "abort") controller.abort();
++		else captured.events.get("session_shutdown")![0]();
++		expect((await result).details).toEqual(cancelled);
++		expect(custom).not.toHaveBeenCalled();
++		expect(events.emitted.some(([c]) => c === REQUEST || c === CLOSED)).toBe(false);
++		expect(events.emitter.listenerCount(REPLY)).toBe(0);
++	});
++	it("never discloses when onHandle arrives without successful construction/binding", async () => {
++		optIn(true);
++		const events = bus();
++		const { pi, captured } = createMockPi({ events });
++		registerAskUserQuestionTool(pi);
++		const custom = vi.fn(async (_factory, options) => {
++			options.onHandle({});
++			throw new Error("construction failed");
++		});
++		const ctx = createMockCtx({ hasUI: true, mode: "tui", ui: { custom: custom as never } });
++		await expect(
++			captured.tools.get("ask_user_question")!.execute("test", params, undefined, undefined, ctx as never),
++		).rejects.toThrow("construction failed");
++		expect(events.emitted.some(([c]) => c === REQUEST || c === CLOSED)).toBe(false);
++		expect(events.emitter.listenerCount(REPLY)).toBe(0);
++	});
++	it("keeps terminal completion working without onHandle and without sensitive publication", async () => {
++		optIn(true);
++		const events = bus();
++		const { pi, captured } = createMockPi({ events });
++		registerAskUserQuestionTool(pi);
++		const custom = vi.fn(
++			(factory) =>
++				new Promise((resolve) => {
++					const component = factory(
++						{ requestRender: vi.fn(), terminal: { rows: 40, columns: 120 } },
++						theme,
++						getKeybindings(),
++						resolve,
++					);
++					component.handleInput("\r");
++				}),
++		);
++		const ctx = createMockCtx({ hasUI: true, mode: "tui", ui: { custom: custom as never } });
++		const result = await captured.tools
++			.get("ask_user_question")!
++			.execute("test", { questions: [params.questions[0]] }, undefined, undefined, ctx as never);
++		expect(result.details).toMatchObject({ cancelled: false });
++		expect(events.emitted.some(([c]) => c === REQUEST || c === CLOSED)).toBe(false);
++	});
++	it.each([undefined, false, "true", true])(
++		"requires exact config true (%s), successful factory and onHandle",
++		async (enabled) => {
++			optIn(enabled);
++			const events = bus();
++			const { pi, captured } = createMockPi({ events });
++			registerAskUserQuestionTool(pi);
++			let component: { handleInput(data: string): void };
++			const custom = vi.fn(
++				(factory, options) =>
++					new Promise((resolve) => {
++						expect(events.emitted.filter(([c]) => c === REQUEST)).toHaveLength(0);
++						component = factory(
++							{ requestRender: vi.fn(), terminal: { rows: 40, columns: 120 } },
++							theme,
++							getKeybindings(),
++							resolve,
++						);
++						expect(events.emitted.filter(([c]) => c === REQUEST)).toHaveLength(0);
++						options.onHandle({});
++						expect(events.emitted.filter(([c]) => c === REQUEST)).toHaveLength(enabled === true ? 1 : 0);
++						component.handleInput("\r");
++					}),
++			);
++			const ctx = createMockCtx({ hasUI: true, mode: "tui", ui: { custom: custom as never } });
++			const result = await captured.tools
++				.get("ask_user_question")!
++				.execute("test", { questions: [params.questions[0]] }, undefined, undefined, ctx as never);
++			expect(result.details).toMatchObject({ cancelled: false, answers: [{ answer: "A" }] });
++			expect(events.emitter.listenerCount(REPLY)).toBe(0);
++		},
++	);
++	it.each(["external", "abort", "shutdown", "departure", "failure"])(
++		"cleans supported %s exit with real component and normalized disclosure",
++		async (exit) => {
++			optIn(true);
++			const events = bus();
++			const { pi, captured } = createMockPi({ events });
++			registerAskUserQuestionTool(pi);
++			const controller = new AbortController();
++			const removeAbort = vi.spyOn(controller.signal, "removeEventListener");
++			const requests: AskUserRequestEventPayload[] = [];
++			const removeClient = events.on(REQUEST, (p) => {
++				requests.push(p as AskUserRequestEventPayload);
++			});
++			const removeRaw = vi.fn();
++			const custom = vi.fn(
++				(factory, options) =>
++					new Promise((resolve, reject) => {
++						const component = factory(
++							{ requestRender: vi.fn(), terminal: { rows: 40, columns: 120 } },
++							theme,
++							getKeybindings(),
++							resolve,
++						);
++						options.onHandle({});
++						expect(requests[0].questions[0]).toEqual({ ...params.questions[0], multiSelect: false });
++						const response = { ...reply, invocationId: requests[0].invocationId, replyId: "client" };
++						if (exit === "external") events.emit(REPLY, response);
++						if (exit === "abort") controller.abort();
++						if (exit === "shutdown") captured.events.get("session_shutdown")![0]();
++						if (exit === "departure") {
++							removeClient();
++							component.handleInput("\r");
++						}
++						if (exit === "failure") reject(new Error("UI failed"));
++					}),
++			);
++			const ctx = createMockCtx({
++				hasUI: true,
++				mode: "tui",
++				ui: { custom: custom as never, onTerminalInput: vi.fn(() => removeRaw) },
++			});
++			const promise = captured.tools
++				.get("ask_user_question")!
++				.execute(
++					"test",
++					{ questions: [{ ...params.questions[0], question: "Which?\r" }] },
++					controller.signal,
++					undefined,
++					ctx as never,
++				);
++			if (exit === "failure") await expect(promise).rejects.toThrow("UI failed");
++			else expect((await promise).details).toMatchObject({ cancelled: ["abort", "shutdown"].includes(exit) });
++			expect(events.emitter.listenerCount(REPLY)).toBe(0);
++			expect(removeRaw).toHaveBeenCalledOnce();
++			expect(removeAbort).toHaveBeenCalled();
++			expect(events.emitted.filter(([c]) => c === CLOSED)).toHaveLength(1);
++		},
++	);
++	it.each(["rpc", "unknown", "unrendered"])(
++		"never publishes for %s hosts without eligible ready TUI",
++		async (mode) => {
++			optIn(true);
++			const events = bus();
++			const { pi, captured } = createMockPi({ events });
++			registerAskUserQuestionTool(pi);
++			const ctx = createMockCtx({
++				hasUI: true,
++				mode: mode === "unrendered" ? "tui" : mode,
++				ui: { custom: vi.fn(async () => undefined) as never },
++			});
++			await captured.tools.get("ask_user_question")!.execute("test", params, undefined, undefined, ctx as never);
++			expect(events.emitted.some(([c]) => c === REQUEST || c === CLOSED)).toBe(false);
++			expect(events.emitter.listenerCount(REPLY)).toBe(0);
++		},
++	);
++});
+diff --git a/packages/rpiv-ask-user-question/companion-replies.ts b/packages/rpiv-ask-user-question/companion-replies.ts
+new file mode 100644
+index 0000000..124801b
+--- /dev/null
++++ b/packages/rpiv-ask-user-question/companion-replies.ts
+@@ -0,0 +1,198 @@
++import { randomUUID } from "node:crypto";
++import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
++import {
++	ASK_USER_CLOSED_EVENT,
++	ASK_USER_REPLY_EVENT,
++	ASK_USER_REPLY_MAX_BYTES,
++	ASK_USER_REPLY_MAX_TEXT_LENGTH,
++	ASK_USER_REPLY_OUTCOME_EVENT,
++	ASK_USER_REQUEST_EVENT,
++	type AskUserClosedEventPayload,
++	type AskUserReplyOutcomeEventPayload,
++} from "./events.js";
++import type { QuestionAnswer, QuestionnaireResult, QuestionParams } from "./tool/types.js";
++
++function object(value: unknown): value is Record<string, unknown> {
++	return value !== null && typeof value === "object" && !Array.isArray(value);
++}
++function text(value: unknown): value is string {
++	return typeof value === "string" && value.length <= ASK_USER_REPLY_MAX_TEXT_LENGTH;
++}
++
++/** Reconstruct owner-authored fields; echoed question/preview fields never reach the result. */
++export function validateCompanionReply(value: unknown, params: QuestionParams): QuestionnaireResult | undefined {
++	try {
++		const json = JSON.stringify(value);
++		if (!json || Buffer.byteLength(json, "utf8") > ASK_USER_REPLY_MAX_BYTES) return undefined;
++	} catch {
++		return undefined;
++	}
++	if (!object(value) || typeof value.cancelled !== "boolean" || !Array.isArray(value.answers)) return undefined;
++	if (value.answers.length > params.questions.length) return undefined;
++	if (value.globalNote !== undefined && !text(value.globalNote)) return undefined;
++	const seen = new Set<number>();
++	const answers: QuestionAnswer[] = [];
++	for (const entry of value.answers) {
++		if (!object(entry) || !Number.isInteger(entry.questionIndex)) return undefined;
++		const index = entry.questionIndex as number;
++		const question = params.questions[index];
++		if (!question || seen.has(index)) return undefined;
++		seen.add(index);
++		if (entry.notes !== undefined && !text(entry.notes)) return undefined;
++		const base = {
++			questionIndex: index,
++			question: question.question,
++			...(typeof entry.notes === "string" && entry.notes.trim() ? { notes: entry.notes } : {}),
++		};
++		if (entry.kind === "option") {
++			if (question.multiSelect || typeof entry.answer !== "string") return undefined;
++			const option = question.options.find((o) => o.label === entry.answer);
++			if (!option) return undefined;
++			answers.push({
++				...base,
++				kind: "option",
++				answer: option.label,
++				...(option.preview ? { preview: option.preview } : {}),
++			});
++		} else if (entry.kind === "custom") {
++			if (entry.answer !== null && !text(entry.answer)) return undefined;
++			answers.push({ ...base, kind: "custom", answer: entry.answer as string | null });
++		} else if (entry.kind === "multi") {
++			if (!question.multiSelect || entry.answer !== null || !Array.isArray(entry.selected)) return undefined;
++			if (entry.selected.length > question.options.length || new Set(entry.selected).size !== entry.selected.length)
++				return undefined;
++			if (
++				![...entry.selected].every(
++					(label) => typeof label === "string" && question.options.some((o) => o.label === label),
++				)
++			)
++				return undefined;
++			answers.push({ ...base, kind: "multi", answer: null, selected: [...entry.selected] as string[] });
++		} else return undefined;
++	}
++	return {
++		answers,
++		cancelled: value.cancelled,
++		...(typeof value.globalNote === "string" && value.globalNote.trim() ? { globalNote: value.globalNote } : {}),
++	};
++}
++
++/** One invocation's completion owner. No retained IDs or listeners after closure. */
++export class CompanionReplies {
++	readonly invocationId = randomUUID();
++	private done: ((result: QuestionnaireResult) => void) | undefined;
++	private winner: QuestionnaireResult | undefined;
++	private settled = false;
++	private published = false;
++	private mounted = false;
++	private delivered = false;
++	private removeReply: (() => void) | undefined;
++	private readonly onAbort = () => this.cancel("aborted");
++
++	constructor(
++		private readonly pi: ExtensionAPI,
++		private readonly params: QuestionParams,
++		private readonly signal?: AbortSignal,
++	) {
++		signal?.addEventListener("abort", this.onAbort, { once: true });
++		if (signal?.aborted) this.onAbort();
++	}
++
++	/** A cancellation received during lazy loading must not open a new overlay. */
++	get completedResult(): QuestionnaireResult | undefined {
++		return this.winner;
++	}
++
++	bind(done: (result: QuestionnaireResult) => void): void {
++		this.done = done;
++	}
++
++	/** Called only after successful component construction AND public onHandle readiness. */
++	ready(): void {
++		if (this.mounted || !this.done) return;
++		this.mounted = true;
++		// Pi's done removes the overlay: never invoke it before onHandle has mounted ours.
++		if (this.settled) {
++			this.deliver();
++			return;
++		}
++		this.published = true;
++		this.removeReply = this.pi.events.on(ASK_USER_REPLY_EVENT, (value: unknown) => {
++			if (!object(value) || value.invocationId !== this.invocationId) return;
++			if (typeof value.replyId !== "string" || !value.replyId.length || value.replyId.length > 128) return;
++			// Also guards a callback captured by an event dispatch before unsubscription.
++			if (this.settled) return;
++			const result = validateCompanionReply(value, this.params);
++			if (!result) {
++				this.outcome(value.replyId, false);
++				return;
++			}
++			this.finish(result, "external", value.replyId);
++		});
++		this.pi.events.emit(ASK_USER_REQUEST_EVENT, {
++			invocationId: this.invocationId,
++			questions: this.params.questions.map((q) => ({
++				question: q.question,
++				header: q.header,
++				multiSelect: q.multiSelect ?? false,
++				options: q.options.map((o) => ({
++					label: o.label,
++					description: o.description,
++					...(o.preview !== undefined ? { preview: o.preview } : {}),
++				})),
++			})),
++		});
++	}
++
++	terminal(result: QuestionnaireResult): void {
++		this.finish(result, "terminal");
++	}
++	cancel(reason: "aborted" | "shutdown"): void {
++		this.finish({ answers: [], cancelled: true }, reason);
++	}
++	close(): void {
++		if (!this.settled) {
++			this.settled = true;
++			this.cleanup();
++			this.closed("ended");
++		}
++	}
++	private finish(result: QuestionnaireResult, reason: AskUserClosedEventPayload["reason"], replyId?: string): void {
++		if (this.settled) return;
++		this.settled = true;
++		this.winner = result;
++		this.cleanup();
++		try {
++			if (this.mounted || reason === "terminal") this.deliver();
++		} finally {
++			if (replyId) this.outcome(replyId, true);
++			this.closed(reason);
++		}
++	}
++	private deliver(): void {
++		if (this.delivered || !this.done || !this.winner) return;
++		this.delivered = true;
++		this.done(this.winner);
++	}
++	private cleanup(): void {
++		this.removeReply?.();
++		this.removeReply = undefined;
++		this.signal?.removeEventListener("abort", this.onAbort);
++	}
++	private outcome(replyId: string, accepted: boolean): void {
++		const payload: AskUserReplyOutcomeEventPayload = {
++			invocationId: this.invocationId,
++			replyId,
++			accepted,
++			...(!accepted ? { reason: "invalid_reply" as const } : {}),
++		};
++		this.pi.events.emit(ASK_USER_REPLY_OUTCOME_EVENT, payload);
++	}
++	private closed(reason: AskUserClosedEventPayload["reason"]): void {
++		if (this.published)
++			this.pi.events.emit(ASK_USER_CLOSED_EVENT, {
++				invocationId: this.invocationId,
++				reason,
++			} satisfies AskUserClosedEventPayload);
++	}
++}
+diff --git a/packages/rpiv-ask-user-question/docs/companion-replies.md b/packages/rpiv-ask-user-question/docs/companion-replies.md
+new file mode 100644
+index 0000000..1b252c4
+--- /dev/null
++++ b/packages/rpiv-ask-user-question/docs/companion-replies.md
+@@ -0,0 +1,136 @@
++# Companion reply API (v1)
++
++This package-specific public interface answers the **same** `ask_user_question` TUI
++invocation. It is not Pi-wide dialog middleware. No second tool, renderer, network
++server, broker, auth layer or settings editor is added.
++
++## Enable and subscribe
++
++In the read-only [config file](configuration.md), explicitly set:
++
++```json
++{ "companionReplies": true }
++```
++
++Restart/reload Pi. Default is off; only boolean `true` enables the interface.
++This authorizes trusted in-process subscribers to see full questions, descriptions
++and previews and submit answers. The event bus is not an authentication boundary.
++A companion must secure its own transport and not forward sensitive content indiscriminately.
++
++Imports are available from the root and `/events` package exports. All payloads are
++JSON-safe; channels are versioned, with the existing append-only stability policy.
++
++| Export | Channel | Direction |
++| --- | --- | --- |
++| `ASK_USER_REQUEST_EVENT` | `rpiv:ask-user:request.v1` | package → client |
++| `ASK_USER_REPLY_EVENT` | `rpiv:ask-user:reply.v1` | client → package |
++| `ASK_USER_REPLY_OUTCOME_EVENT` | `rpiv:ask-user:reply-outcome.v1` | package → client |
++| `ASK_USER_CLOSED_EVENT` | `rpiv:ask-user:closed.v1` | package → client |
++
++```ts
++import {
++  ASK_USER_REQUEST_EVENT, ASK_USER_REPLY_EVENT,
++  ASK_USER_REPLY_OUTCOME_EVENT, ASK_USER_CLOSED_EVENT,
++  type AskUserRequestEventPayload, type AskUserReplyEventPayload,
++} from "@juicesharp/rpiv-ask-user-question/events";
++
++const unsubscribe = pi.events.on(ASK_USER_REQUEST_EVENT, (request: AskUserRequestEventPayload) => {
++  // Show request.questions; keep request.invocationId for the user's explicit reply.
++});
++// On an explicit user selection, not automatically on request:
++const reply: AskUserReplyEventPayload = {
++  invocationId: pending.invocationId, replyId: clientRequestId,
++  cancelled: false,
++  answers: [{ questionIndex: 0, kind: "option", answer: pending.questions[0].options[0].label }],
++};
++pi.events.emit(ASK_USER_REPLY_EVENT, reply);
++// Subscribe to outcome and closure before sending; a reply may complete synchronously.
++// unsubscribe() simply detaches the observer; the terminal stays usable.
++```
++
++## Request and disclosure timing
++
++`AskUserRequestEventPayload` contains an opaque, fresh `invocationId` and ordered
++`questions[]`: `{ question, header, multiSelect, options[] }`, with options
++`{ label, description, preview? }`. These are full normalized authored strings
++(CRLF → LF; lone CR removed), not TUI sentinel rows or abbreviated previews.
++`multiSelect` is always boolean. The ID is not a tool-call ID or a durable session ID.
++
++One request is emitted only if enabled, `ctx.mode === "tui"`, the actual existing
++component was successfully constructed with its completion callback bound, and
++`ui.custom` invoked `onHandle` after showing the overlay. Component construction
++alone, `hasUI`, validation, RPC/unknown hosts and unrendered custom calls are not
++sufficient. A pending abort/shutdown suppresses publication. The legacy prompt and
++blocked events keep their existing behavior, including default-off and RPC paths.
++
++No replay/snapshot service exists. Subscribe before invocation. Reconnection after
++missing a request does not acquire a handle; the terminal remains authoritative.
++
++## Reply validation
++
++`AskUserReplyEventPayload` contains:
++
++- `invocationId`: exactly the active request's ID.
++- `replyId`: non-empty client correlation string, at most 128 UTF-16 code units.
++- `cancelled`: boolean.
++- `answers`: up to one entry per authored question, unique integer `questionIndex`
++  in the zero-based request range; partial submission and empty arrays are allowed.
++- Optional `globalNote`: string.
++
++Each answer has optional string `notes` and one variant:
++
++- `{ questionIndex, kind: "option", answer: string }`: single-select only, exact
++  authored option label (case/whitespace sensitive).
++- `{ questionIndex, kind: "custom", answer: string | null }`: either question mode,
++  matching the existing typed-answer result semantics (including empty/null values).
++- `{ questionIndex, kind: "multi", answer: null, selected: string[] }`: multi-select
++  only; unique exact authored labels, at most the number of authored options.
++  Empty selection is allowed. Selection order is retained.
++
++`ASK_USER_REPLY_MAX_BYTES` is 65,536 bytes for the complete JSON-serialized reply
++(UTF-8); `ASK_USER_REPLY_MAX_TEXT_LENGTH` is 8,192 UTF-16 code units per custom text,
++per-question note and global note. Oversized/unserializable replies are rejected.
++Unknown fields are tolerated but count toward the byte limit. They are not echoed:
++question text and selected preview are reconstructed exclusively from owner-authored
++normalized data. Whitespace-only notes are omitted; otherwise their original text
++is retained. The existing result formatter decides answered-vs-declined prose for
++empty/partial submissions, note-only submissions and cancellation. No tool schema,
++name, result field or model-facing error code is added.
++
++## Outcome, closure and races
++
++An active, correlatable invalid reply emits
++`{ invocationId, replyId, accepted: false, reason: "invalid_reply" }` and leaves the
++terminal and listener active. A validated winning reply emits
++`{ invocationId, replyId, accepted: true }`, then closure. Acceptance acknowledges
++only this live completion callback, **not native tool dispatch or durable persistence**.
++
++Closure is `{ invocationId, reason }`, exactly once per published invocation:
++`terminal`, `external`, `aborted`, `shutdown`, or `ended` (other/custom-UI exit).
++Discard that pending UI on closure. No final answer payload is broadcast. Terminal
++and external contenders use one invocation-owned once-only arbiter around the
++existing public `done`. The first completion wins; reentrant/duplicate contenders
++cannot change the result. External-first dismisses the terminal overlay; terminal-
++first closes the external pending request.
++
++Per-invocation reply listeners are removed at completion/error/abort/shutdown.
++Unknown, closed and inactive IDs are **ignored without acknowledgement**, as are
++uncorrelatable replies (missing/invalid `replyId`). There is no tombstone registry,
++permanent reply listener, retry cache or exactly-once transport guarantee. Do not
++blindly replay uncertain replies after reconnecting; a late attempt cannot alter
++another invocation. A captured handler already in dispatch also guards against
++completion. Client departure does not cancel the questionnaire.
++
++Abort uses the tool's supported signal; orderly reload/session replacement/process
++shutdown uses public `session_shutdown`. Both return the existing cancellation
++shape for opted-in invocations. Abrupt death cannot publish closure; clients must
++also treat owner disconnection as loss of their pending capability.
++
++## Checked scope
++
++Source tests use locked Pi 0.80.6 dependencies. The isolated source-loaded PTY probe
++under the parent project's `probes/run-questionnaire-replies.py` runs the installed
++Pi 0.99.2 TUI with no provider/model calls: external-first, terminal-first, invalid
++and late replies, client departure, and default-off. It captures the public tool
++definition and invokes it directly; it does **not** prove native model dispatch,
++transcript persistence, browser transport/security or general Pi version compatibility.

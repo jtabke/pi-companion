@@ -1,0 +1,50 @@
+{
+	"name": "pi-companion",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"engines": {
+		"node": ">=24"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"build": "tsc -p tsconfig.node.json && vite build",
+		"start": "node dist/gateway/cli.js",
+		"test": "vitest run",
+		"test:browser": "PLAYWRIGHT_BROWSERS_PATH=.cache/playwright playwright test",
+		"test:pi": "python3 -B tests/real-pi.py"
+	},
+	"dependencies": {
+		"@fastify/cookie": "11.1.2",
+		"@fastify/helmet": "13.1.1",
+		"@fastify/static": "10.1.5",
+		"@sinclair/typebox": "0.34.52",
+		"fastify": "5.12.5",
+		"fs-ext": "2.1.1",
+		"photoswipe": "5.4.4",
+		"react": "19.2.4",
+		"react-dom": "19.2.4",
+		"react-markdown": "10.1.0",
+		"remark-gfm": "4.0.1",
+		"sharp": "0.35.5"
+	},
+	"devDependencies": {
+		"@playwright/test": "1.63.0",
+		"@types/fs-ext": "2.0.3",
+		"@types/node": "26.6.3",
+		"@types/react": "19.3.0",
+		"@types/react-dom": "19.3.0",
+		"@vitejs/plugin-react": "6.1.1",
+		"typescript": "5.9.3",
+		"vite": "8.3.1",
+		"vitest": "4.1.11"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "0.99.2"
+	},
+	"peerDependenciesMeta": {
+		"@earendil-works/pi-coding-agent": {
+			"optional": true
+		}
+	}
+}
