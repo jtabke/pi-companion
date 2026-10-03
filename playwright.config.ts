@@ -15,7 +15,12 @@ if (process.env.C2_PAIR_SOCKET === undefined) {
 }
 export default defineConfig({
 	testDir: "tests",
-	testMatch: ["browser.spec.ts", "chat-layout.spec.ts", "pwa.spec.ts"],
+	testMatch: [
+		"browser.spec.ts",
+		"chat-layout.spec.ts",
+		"chat-reading.spec.ts",
+		"pwa.spec.ts",
+	],
 	fullyParallel: false,
 	workers: 1,
 	use: { baseURL: "http://127.0.0.1:4393", trace: "off" },
