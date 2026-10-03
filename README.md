@@ -58,13 +58,16 @@ Pi headings while retaining accessible identity. Native Thinking stays collapsed
 opened and retains that choice while the same item updates. Observed active work uses
 three subtle dots with an accessible activity label; reduced-motion mode shows static dots.
 Consecutive tool results share compact icon-labelled stacks; each output expands independently.
-Recognized native tools show their file path or shell command, with the full bounded summary
-available inside the disclosure. Native execution events show Running; finalized results show
-Done or Failed, with a short failure preview visible without expanding. Nested calls appear
+Recognized native file tools show the filename; shell tools show the command. The full
+bounded path or command is available inside the disclosure. Native execution events show
+Running; finalized results show Done or Failed, with a short failure preview visible without expanding. Nested calls appear
 only while observed running; their output remains owned by the parent tool. Progress is sampled
 on existing gateway refreshes, so short calls may finish between observations.
 Successful native edits expose their structured diff with distinct added/deleted backgrounds;
-result text stays available. No syntax-highlighting dependency is added.
+result text stays available. Lowlight highlights fenced code, native Read output and edit
+diffs using the fence language or file extension, rendered as escaped React elements.
+Unknown languages and code over 100,000 characters stay plain text; shell logs and
+Edit/Write receipts are not interpreted as source code. Highlighting does not change copied text.
 Copy answer copies the displayed answer's Markdown text, not reasoning or tool output;
 shortened answers remain previews, not the full native history. Code copying stays separate.
 A read-only line at the bottom shows the native model and estimated context usage when
@@ -185,7 +188,7 @@ package. Have a local checkout of this repository before following the steps bel
 
 | Requirement           | Current support and setup                                                                                                                                                                                                                                                                                                                                 |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pi                    | **0.99.2 only** is checked. Install Pi and authenticate/configure its provider separately; `pi` must be on your PATH and work in your project terminal. See [Pi's official getting-started instructions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/README.md#getting-started). Do not infer support for the latest Pi version. |
+| Pi                    | **0.99.2** is the earlier checked baseline; **1.0.1** is checked against the installed host's public bridge APIs, local fixtures and read-only live observations. Install Pi and authenticate/configure its provider separately; `pi` must be on your PATH and work in your project terminal. See [Pi's official getting-started instructions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/README.md#getting-started). Do not infer support for the latest Pi version. |
 | Node.js and npm       | Tested with **Node 26.5.0 and npm 11.17.0**. Node 24 is a proposed baseline, not runtime-verified.                                                                                                                                                                                                                                                        |
 | Operating system      | Tested on **macOS**. Linux/Windows compatibility is not established.                                                                                                                                                                                                                                                                                      |
 | Native build tools    | A compiler/toolchain for the required `fs-ext` native build (on macOS, Xcode Command Line Tools).                                                                                                                                                                                                                                                         |
@@ -436,7 +439,9 @@ From the companion root, rebuild and restart the running managed gateway with:
 npm run restart
 ```
 
-Save unsent browser drafts first, then refresh the browser after readiness. The command
+Feature implementation includes the required bounded managed gateway restart; agents do
+not need a second permission prompt for that operation. Save unsent browser drafts before
+refreshing the browser after readiness. The command
 accepts no arguments. It builds before shutdown and reuses the running gateway's exact
 origin, port, runtime and authentication directory. Pi sessions remain running. Build
 failure leaves the gateway alone; unconfirmed cleanup prevents replacement startup.

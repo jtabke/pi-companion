@@ -16,12 +16,13 @@ def main():
     if package is None:
         raise SystemExit("Cannot locate installed Pi package")
     meta = json.loads((package / "package.json").read_text())
-    if (meta.get("name"), meta.get("version")) != ("@earendil-works/pi-coding-agent", "0.99.2"):
-        raise SystemExit("Only Pi 0.99.2 reviewed; stop for version review")
+    version = meta.get("version")
+    if meta.get("name") != "@earendil-works/pi-coding-agent" or version not in {"0.99.2", "1.0.1"}:
+        raise SystemExit("Only Pi 0.99.2 and 1.0.1 reviewed; stop for version review")
     public_ai = package / "node_modules/@earendil-works/pi-ai"
     ai = json.loads((public_ai / "package.json").read_text())
-    if (ai.get("name"), ai.get("version")) != ("@earendil-works/pi-ai", "0.99.2"):
-        raise SystemExit("Only public pi-ai 0.99.2 reviewed")
+    if (ai.get("name"), ai.get("version")) != ("@earendil-works/pi-ai", version):
+        raise SystemExit("Public pi-ai must match the reviewed Pi version")
 
     root = Path(__file__).resolve().parent.parent
     scope = root / "node_modules/@earendil-works"
@@ -37,7 +38,7 @@ def main():
     for link, target in links:
         if not link.is_symlink():
             link.symlink_to(target, target_is_directory=True)
-    print("Linked reviewed Pi 0.99.2 and pi-ai 0.99.2 declarations")
+    print(f"Linked reviewed Pi {version} and pi-ai {version} declarations")
 
 
 if __name__ == "__main__":

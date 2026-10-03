@@ -972,6 +972,30 @@ pre:focus-visible,
 	display: grid;
 	min-width: max-content;
 }
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-name,
+.hljs-literal {
+	color: light-dark(#cf222e, #ff7b72);
+}
+.hljs-string,
+.hljs-regexp {
+	color: light-dark(#0a3069, #a5d6ff);
+}
+.hljs-number,
+.hljs-built_in,
+.hljs-type {
+	color: light-dark(#8250df, #d2a8ff);
+}
+.hljs-title,
+.hljs-attr,
+.hljs-attribute {
+	color: light-dark(#953800, #ffa657);
+}
+.hljs-comment,
+.hljs-meta {
+	color: var(--muted);
+}
 .diff-added {
 	background: light-dark(#e2f4e6, #173c26);
 }

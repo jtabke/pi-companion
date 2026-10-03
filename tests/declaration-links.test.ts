@@ -71,20 +71,25 @@ function fixture(piVersion = "0.99.2", aiVersion = "0.99.2") {
 	return { root, host, ai, piMeta, scope, run };
 }
 
-it("links only reviewed declarations, is idempotent, and does not run or modify host Pi", () => {
-	const f = fixture(),
-		before = readFileSync(f.piMeta, "utf8");
-	expect(f.run().status).toBe(0);
-	expect(realpathSync(join(f.scope, "pi-coding-agent"))).toBe(
-		realpathSync(f.host),
-	);
-	expect(realpathSync(join(f.scope, "pi-ai"))).toBe(realpathSync(f.ai));
-	expect(f.run().status).toBe(0);
-	expect(readFileSync(f.piMeta, "utf8")).toBe(before);
-});
+it.each(["0.99.2", "1.0.1"])(
+	"links reviewed %s declarations, is idempotent, and does not run or modify host Pi",
+	(version) => {
+		const f = fixture(version, version),
+			before = readFileSync(f.piMeta, "utf8");
+		expect(f.run().status).toBe(0);
+		expect(realpathSync(join(f.scope, "pi-coding-agent"))).toBe(
+			realpathSync(f.host),
+		);
+		expect(realpathSync(join(f.scope, "pi-ai"))).toBe(realpathSync(f.ai));
+		expect(f.run().status).toBe(0);
+		expect(readFileSync(f.piMeta, "utf8")).toBe(before);
+	},
+);
 it.each([
 	["0.99.1", "0.99.2"],
 	["0.99.2", "0.99.1"],
+	["1.0.2", "1.0.2"],
+	["1.0.1", "0.99.2"],
 ])("refuses unreviewed host versions (%s, %s) before linking", (pi, ai) => {
 	const f = fixture(pi, ai);
 	expect(f.run().status).not.toBe(0);

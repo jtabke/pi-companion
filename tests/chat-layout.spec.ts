@@ -7076,6 +7076,19 @@ for (const width of [320, 390]) {
 					tool: { name: "read", summary: "src/main.ts", state: "running" },
 					blocks: [],
 				},
+				{
+					id: "fences",
+					role: "assistant",
+					blocks: [
+						{
+							type: "text",
+							text:
+								'```typescript\nconst value = "<script>";\n```\n\n```unknown-language\nconst plain = 1;\n```\n\n```typescript\n' +
+								"x".repeat(100_001) +
+								"\n```",
+						},
+					],
+				},
 			],
 		};
 		await page.route("**/api/snapshot*", (route) =>
@@ -7129,7 +7142,9 @@ for (const width of [320, 390]) {
 					value: () => {
 						const item = snapshot.items.find((item) => item.id === "active")!;
 						item.tool!.state = "completed";
-						item.blocks = [{ type: "text", text: "Native read completed" }];
+						item.blocks = [
+							{ type: "text", text: 'const ready = "<script>";\n' },
+						];
 						snapshot.context!.tokens = null;
 						for (const source of sources) source.emit();
 					},
@@ -7179,6 +7194,7 @@ for (const width of [320, 390]) {
 		);
 		const edit = page.locator('[data-native-item="edit"]');
 		await expect(edit.locator("summary")).toContainText("Edit");
+		await expect(edit.locator(".tool-summary")).toHaveText("main.ts");
 		await expect(edit.locator(".tool-summary")).toHaveAttribute(
 			"title",
 			snapshot.items[1].tool!.summary,
@@ -7192,6 +7208,13 @@ for (const width of [320, 390]) {
 			'-1 const old = "<script>";',
 		);
 		await expect(edit.locator("script")).toHaveCount(0);
+		await expect(
+			edit.locator(".tool-output").first().locator('[class^="hljs-"]'),
+		).toHaveCount(0);
+		await expect(edit.locator(".diff-added .hljs-keyword")).toHaveText("const");
+		await expect(edit.locator(".diff-deleted .hljs-string")).toHaveText(
+			'"<script>"',
+		);
 		await expect(
 			page.locator('[data-native-item="failure"] .tool-error-preview'),
 		).toHaveText("Tests failed: expected 2, received 1");
@@ -7218,8 +7241,26 @@ for (const width of [320, 390]) {
 		);
 		await active.locator("summary").click();
 		await expect(active.locator(".tool-output")).toHaveText(
-			"Native read completed",
+			'const ready = "<script>";\n',
+			{ useInnerText: false },
 		);
+		await expect(active.locator(".hljs-keyword")).toHaveText("const");
+		await expect(
+			page.locator('[data-native-item="failure"] [class^="hljs-"]'),
+		).toHaveCount(0);
+		const fences = page.locator('[data-native-item="fences"] .code-block');
+		await expect(fences.nth(0).locator(".hljs-keyword")).toHaveText("const");
+		await expect(fences.nth(0).locator("pre")).toHaveText(
+			'const value = "<script>";\n',
+			{ useInnerText: false },
+		);
+		await expect(fences.nth(1).locator('[class^="hljs-"]')).toHaveCount(0);
+		await expect(fences.nth(2).locator('[class^="hljs-"]')).toHaveCount(0);
+		await expect(fences.nth(2).locator("pre")).toHaveText(
+			"x".repeat(100_001) + "\n",
+			{ useInnerText: false },
+		);
+		await expect(page.locator(".conversation script")).toHaveCount(0);
 		for (const colorScheme of ["light", "dark"] as const) {
 			await page.emulateMedia({ colorScheme });
 			await page.evaluate(() => {
@@ -7242,6 +7283,15 @@ for (const width of [320, 390]) {
 				.locator(".diff-deleted")
 				.evaluate((node) => getComputedStyle(node).backgroundColor);
 			expect(added).not.toBe(deleted);
+			expect(
+				await edit
+					.locator(".diff-added .hljs-keyword")
+					.evaluate((node) => getComputedStyle(node).color),
+			).not.toBe(
+				await edit
+					.locator(".diff-added")
+					.evaluate((node) => getComputedStyle(node).color),
+			);
 			await page.screenshot({
 				path: testInfo.outputPath(`native-tools-${width}-${colorScheme}.png`),
 			});

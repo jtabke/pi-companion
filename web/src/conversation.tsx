@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import PhotoSwipe from "photoswipe";
 import "photoswipe/style.css";
 import type { Block, Snapshot } from "../../src/shared/protocol.js";
+import { CodeText, DiffText } from "./code.js";
 
 function NativeImage({
 	block,
@@ -162,7 +163,15 @@ function CodeBlock({
 				<span>{language || "Code"}</span>
 				<CopyText text={text} kind="code" />
 			</div>
-			<pre tabIndex={0}>{children}</pre>
+			<pre tabIndex={0}>
+				{text ? (
+					<code>
+						<CodeText text={text} language={language} />
+					</code>
+				) : (
+					children
+				)}
+			</pre>
 		</div>
 	);
 }
@@ -217,11 +226,15 @@ function ContentBlocks({
 	blocks,
 	snapshot,
 	toolOutput = false,
+	sourceText = false,
+	language,
 	imageOffset = 0,
 }: {
 	blocks: Block[];
 	snapshot: Snapshot;
 	toolOutput?: boolean;
+	sourceText?: boolean;
+	language?: string;
 	imageOffset?: number;
 }) {
 	let imageNumber = imageOffset;
@@ -257,27 +270,14 @@ function ContentBlocks({
 								tabIndex={0}
 								aria-label="Edit diff"
 							>
-								<code>
-									{block.text.split("\n").map((line, i, lines) => (
-										<span
-											key={i}
-											className={
-												line.startsWith("+")
-													? "diff-added"
-													: line.startsWith("-")
-														? "diff-deleted"
-														: "diff-context"
-											}
-										>
-											{line}
-											{i < lines.length - 1 ? "\n" : ""}
-										</span>
-									))}
-								</code>
+								<DiffText text={block.text} language={language} />
 							</pre>
 						) : toolOutput ? (
 							<pre className="tool-output" tabIndex={0}>
-								{block.text}
+								<CodeText
+									text={block.text}
+									language={sourceText ? language : undefined}
+								/>
 							</pre>
 						) : (
 							<SafeMarkdown text={block.text} />
@@ -355,6 +355,21 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 		const imageOffset = imageNumber;
 		imageNumber += item.blocks.filter((block) => block.type === "image").length;
 		const isTool = item.role.startsWith("tool:");
+		const codePath =
+			item.tool &&
+			[
+				"read",
+				"write",
+				"edit",
+				"functions.read",
+				"functions.write",
+				"functions.edit",
+			].includes(item.tool.name)
+				? item.tool.summary
+				: undefined;
+		const toolSummary = codePath
+			? codePath.split(/[/\\]/).pop() || codePath
+			: item.tool?.summary;
 		const mediaBlock = (block: Block) =>
 			block.type === "image" ||
 			(block.type === "unavailable" &&
@@ -409,7 +424,7 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 									/>
 									{item.tool?.summary && (
 										<span className="tool-summary" title={item.tool.summary}>
-											{item.tool.summary}
+											{toolSummary}
 										</span>
 									)}
 									{item.tool && (
@@ -445,7 +460,16 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 										{item.tool.summary}
 									</p>
 								)}
-								<ContentBlocks blocks={output} snapshot={snapshot} toolOutput />
+								<ContentBlocks
+									blocks={output}
+									snapshot={snapshot}
+									toolOutput
+									sourceText={
+										item.tool?.name === "read" ||
+										item.tool?.name === "functions.read"
+									}
+									language={codePath}
+								/>
 							</details>
 						)}
 						{errorPreview && (
