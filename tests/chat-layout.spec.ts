@@ -6835,6 +6835,7 @@ for (const width of [320, 390]) {
 							{ type: "text", text: 'const ready = "<script>";\n' },
 						];
 						snapshot.context!.tokens = null;
+						snapshot.model = "fixture/" + "long-model-name-".repeat(12);
 						for (const source of sources) source.emit();
 					},
 				});
@@ -6916,8 +6917,12 @@ for (const width of [320, 390]) {
 				.locator(".tool-detail-summary")
 				.evaluate((node) => getComputedStyle(node).outlineStyle),
 		).not.toBe("none");
-		await expect(page.locator(".conversation-metadata")).toHaveText(
-			"fixture/modelContext ~40% · 128,000 token limit",
+		const metadata = page.getByRole("group", {
+			name: "Model and context",
+		});
+		await expect(metadata).toHaveText("model40%/128,000");
+		await expect(page.locator(".conversation .session-metadata")).toHaveCount(
+			0,
 		);
 		const active = page.locator('[data-native-item="active"]');
 		await expect(active.locator(".tool-state")).toHaveText("Running");
@@ -6925,8 +6930,13 @@ for (const width of [320, 390]) {
 			(window as unknown as { finishTool: () => void }).finishTool(),
 		);
 		await expect(active.locator(".tool-state")).toHaveText("Done");
-		await expect(page.locator(".conversation-metadata")).toHaveText(
-			"fixture/modelContext unknown · 128,000 token limit",
+		await expect(metadata.locator(".context-usage")).toHaveText("?%/128,000");
+		await expect(metadata.locator(".context-usage")).toHaveAttribute(
+			"aria-label",
+			"Context usage unknown, 128,000 token limit",
+		);
+		await expect(metadata.locator(".model-name")).toHaveText(
+			"long-model-name-".repeat(12),
 		);
 		await active.locator("summary").click();
 		await expect(active.locator(".tool-output")).toHaveText(
@@ -6983,6 +6993,40 @@ for (const width of [320, 390]) {
 			);
 			await page.screenshot({
 				path: testInfo.outputPath(`native-tools-${width}-${colorScheme}.png`),
+			});
+		}
+		for (const height of [844, 300]) {
+			await page.setViewportSize({ width, height });
+			await page
+				.getByPlaceholder("Message Pi")
+				.fill("A locally edited draft ".repeat(12));
+			await expect
+				.poll(async () => {
+					const footer = (await metadata.boundingBox())!;
+					const input = (await page.locator(".composer").boundingBox())!;
+					return (
+						footer.y >= input.y + input.height &&
+						footer.y + footer.height <= height
+					);
+				})
+				.toBe(true);
+			const footer = (await metadata.boundingBox())!;
+			expect(footer.height).toBeLessThanOrEqual(24);
+			expect(
+				await metadata
+					.locator(".model-name")
+					.evaluate((node) => getComputedStyle(node).textOverflow),
+			).toBe("ellipsis");
+			const contextBox = (await metadata
+				.locator(".context-usage")
+				.boundingBox())!;
+			expect(contextBox.x + contextBox.width).toBeLessThanOrEqual(width);
+			const input = (await page.getByPlaceholder("Message Pi").boundingBox())!;
+			expect(input.height).toBeGreaterThanOrEqual(44);
+			await page.screenshot({
+				path: testInfo.outputPath(
+					`metadata-below-input-${width}-${height}.png`,
+				),
 			});
 		}
 		expect(posts).toEqual([]);

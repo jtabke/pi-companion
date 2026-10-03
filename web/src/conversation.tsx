@@ -528,20 +528,6 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 			)}
 			<section className="conversation" aria-label="Conversation">
 				{conversation}
-				{(snapshot?.model || snapshot?.context) && (
-					<p className="conversation-metadata">
-						{snapshot.model && <span>{snapshot.model}</span>}
-						{snapshot.context && (
-							<span title="Estimated native context usage for the selected conversation">
-								Context{" "}
-								{snapshot.context.tokens === null
-									? "unknown"
-									: `~${Math.round((snapshot.context.tokens / snapshot.context.window) * 100)}%`}{" "}
-								· {snapshot.context.window.toLocaleString()} token limit
-							</span>
-						)}
-					</p>
-				)}
 			</section>
 		</>
 	);

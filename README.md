@@ -70,8 +70,10 @@ Unknown languages and code over 100,000 characters stay plain text; shell logs a
 Edit/Write receipts are not interpreted as source code. Highlighting does not change copied text.
 Copy answer copies the displayed answer's Markdown text, not reasoning or tool output;
 shortened answers remain previews, not the full native history. Code copying stays separate.
-A read-only line at the bottom shows the native model and estimated context usage when
-available. Unknown context stays unknown; no child-inclusive cost total is inferred.
+A compact read-only row below the composer shows the model name without its provider
+and estimated context usage as `70%/272,000`. Long model names shorten visually; the full
+name remains available as text to assistive technology. Unknown usage shows `?%` rather
+than zero; no child-inclusive cost total is inferred.
 Markdown tables keep readable natural column widths in a separate horizontal scroll area,
 with Left/Right-arrow controls when that area is focused. They do not widen the page.
 

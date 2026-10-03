@@ -327,6 +327,7 @@ function App() {
 		selectedSummary?.session ??
 		(selected ? "Selected terminal" : "Pi Companion");
 	const projectName = snapshot?.project ?? selectedSummary?.project;
+	const modelName = snapshot?.model?.slice(snapshot.model.indexOf("/") + 1);
 	const selectedActivity = sessionActivity(
 		selectedSummary ?? snapshot,
 		!!current && view.connection === "connected" && transport === "Connected",
@@ -747,6 +748,37 @@ function App() {
 				observedQuestions={observedQuestions}
 				onReviewQuestions={() => setQuestionReview((value) => value + 1)}
 			/>
+			{paired && selected && (modelName || snapshot?.context) && (
+				<div
+					className="session-metadata"
+					role="group"
+					aria-label="Model and context"
+				>
+					{modelName && (
+						<span className="model-name" title={modelName}>
+							{modelName}
+						</span>
+					)}
+					{snapshot?.context && (
+						<span
+							className="context-usage"
+							title="Estimated native context usage / token limit"
+							aria-label={
+								snapshot.context.tokens === null
+									? `Context usage unknown, ${snapshot.context.window.toLocaleString()} token limit`
+									: undefined
+							}
+						>
+							{snapshot.context.tokens === null
+								? "?"
+								: Math.round(
+										(snapshot.context.tokens / snapshot.context.window) * 100,
+									)}
+							%/{snapshot.context.window.toLocaleString()}
+						</span>
+					)}
+				</div>
+			)}
 		</main>
 	);
 }
