@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#171717"/>
+  <!-- The complete foreground fits the maskable safe circle (radius 204.8). -->
+  <path fill="#f5f0e8" d="M154 112H358Q400 112 400 154V320Q400 362 358 362H228L148 400V362H154Q112 362 112 320V154Q112 112 154 112Z"/>
+  <path fill="#171717" d="M176 178H336V210H310V276Q310 304 328 304V334Q280 334 280 276V210H232V276Q232 334 184 334V304Q202 304 202 276V210H176Z"/>
+</svg>

@@ -1,7 +1,7 @@
 # Questionnaire source integration
 
-`rpiv-mono/` is an **ignored local nested Git checkout**, not an initial-commit
-candidate or submodule. A parent Git entry would record upstream HEAD, not its local
+`rpiv-mono/` is an **ignored local nested Git checkout**, not a commit candidate
+or submodule. A parent Git entry would record upstream HEAD, not its local
 questionnaire changes. Do not delete, reset or overwrite the existing checkout or its
 index. The committed restoration material is:
 
@@ -75,6 +75,8 @@ than duplicating the contract here.
 
 Use the source package only with explicit source-loading authorization and opt-in
 `companionReplies: true`; default behavior remains off. Global installation or a
-questionnaire replacement requires a separate decision. See the preserved
-[TUI integration evidence](../docs/questionnaire-replies.md) and
-[browser transport evidence](../docs/c4-questionnaire.md) for checked scope and limits.
+questionnaire replacement requires a separate decision. Companion depends on this
+public event/reply contract, not private TUI methods. The integration preserves terminal
+completion and rejects stale replies; it does not bridge arbitrary custom dialogs.
+Source restoration and fixture checks do not prove global installation, another Pi
+version, or real-phone questionnaire behavior. See [current limits](../README.md#limitations).

@@ -1,0 +1,11 @@
+# Generated files and local third-party checkout (also excluded by .gitignore).
+node_modules/
+dist/
+.cache/
+test-results/
+playwright-report/
+integrations/rpiv-mono/
+package-lock.json
+
+# Runner-substituted template, not parseable TypeScript before substitution.
+probes/c1-extension.ts

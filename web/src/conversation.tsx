@@ -1,0 +1,410 @@
+import React, { useEffect, useRef, useState } from "react";
+import Markdown, { type ExtraProps } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import PhotoSwipe from "photoswipe";
+import "photoswipe/style.css";
+import type { Block, Snapshot } from "../../src/shared/protocol.js";
+
+function NativeImage({
+	block,
+	snapshot,
+	imageNumber,
+}: {
+	block: Extract<Block, { type: "image" }>;
+	snapshot: Snapshot;
+	imageNumber: number;
+}) {
+	const [failed, setFailed] = useState(false);
+	const viewer = useRef<PhotoSwipe | null>(null);
+	const button = useRef<HTMLButtonElement>(null);
+	const src = `/api/media/${snapshot.instance}/${snapshot.generation}/${block.ref}`;
+	const label = `Native Pi image ${imageNumber}`;
+	useEffect(
+		() => () => {
+			viewer.current?.destroy();
+		},
+		[],
+	);
+	function enlarge() {
+		const pswp = new PhotoSwipe({
+			dataSource: [
+				{
+					src,
+					width: block.width,
+					height: block.height,
+					alt: `${label} enlarged`,
+				},
+			],
+			index: 0,
+			// Fit the viewing area even for small native screenshots; PhotoSwipe's default caps at 1:1.
+			initialZoomLevel: (level) =>
+				level.panAreaSize
+					? Math.min(
+							level.panAreaSize.x / block.width,
+							level.panAreaSize.y / block.height,
+						)
+					: level.fit,
+			showHideAnimationType: "none",
+			loop: false,
+			// Restore keyboard focus without moving the conversation reader.
+			returnFocus: false,
+		});
+		viewer.current = pswp;
+		pswp.on("destroy", () => {
+			viewer.current = null;
+			button.current?.focus({ preventScroll: true });
+		});
+		pswp.init();
+	}
+	return failed ? (
+		<p role="status">{label} unavailable</p>
+	) : (
+		<button
+			ref={button}
+			className="image"
+			onClick={enlarge}
+			aria-label={`Enlarge native Pi image ${imageNumber}`}
+		>
+			<img
+				src={src}
+				width={block.width}
+				height={block.height}
+				alt={label}
+				onError={() => setFailed(true)}
+				loading="lazy"
+			/>
+		</button>
+	);
+}
+function CodeBlock({
+	children,
+	node,
+}: React.ComponentProps<"pre"> & ExtraProps) {
+	const code = node?.children.find(
+		(child) => child.type === "element" && child.tagName === "code",
+	);
+	const classes =
+		code?.type === "element" ? code.properties.className : undefined;
+	const language = Array.isArray(classes)
+		? classes
+				.find(
+					(name) => typeof name === "string" && name.startsWith("language-"),
+				)
+				?.toString()
+				.slice(9)
+		: undefined;
+	const text =
+		code?.type === "element"
+			? code.children
+					.filter((child) => child.type === "text")
+					.map((child) => child.value)
+					.join("")
+			: "";
+	const [copy, setCopy] = useState<{
+		text: string;
+		status: "copying" | "copied" | "failed";
+	}>();
+	async function copyCode() {
+		if (copy?.status === "copying") return;
+		setCopy({ text, status: "copying" });
+		try {
+			await navigator.clipboard.writeText(text);
+			setCopy({ text, status: "copied" });
+		} catch {
+			setCopy({ text, status: "failed" });
+		}
+	}
+	const status = copy?.text === text ? copy.status : undefined;
+	return (
+		<div className="code-block">
+			<div className="code-heading">
+				<span>{language || "Code"}</span>
+				<button
+					type="button"
+					onClick={copyCode}
+					aria-disabled={copy?.status === "copying"}
+				>
+					Copy code
+				</button>
+				<span className="code-copy-status" role="status">
+					{status === "copied"
+						? "Copied"
+						: status === "failed"
+							? "Copy failed — select code to copy."
+							: status === "copying"
+								? "Copying…"
+								: ""}
+				</span>
+			</div>
+			<pre tabIndex={0}>{children}</pre>
+		</div>
+	);
+}
+export function SafeMarkdown({ text }: { text: string }) {
+	return (
+		<Markdown
+			remarkPlugins={[remarkGfm]}
+			skipHtml
+			components={{
+				pre: CodeBlock,
+				table: ({ children }) => (
+					<div
+						className="table-scroll"
+						role="region"
+						aria-label="Scrollable table"
+						tabIndex={0}
+						onKeyDown={(event) => {
+							if (
+								event.target !== event.currentTarget ||
+								event.altKey ||
+								event.ctrlKey ||
+								event.metaKey ||
+								event.shiftKey
+							)
+								return;
+							if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+								event.preventDefault();
+								event.currentTarget.scrollLeft +=
+									event.key === "ArrowRight" ? 40 : -40;
+							}
+						}}
+					>
+						<table>{children}</table>
+					</div>
+				),
+				img: () => <span>[External image not loaded]</span>,
+				a: ({ children, href }) =>
+					href && /^https?:\/\//i.test(href) ? (
+						<a href={href} rel="noreferrer noopener" target="_blank">
+							{children}
+						</a>
+					) : (
+						<span>{children}</span>
+					),
+			}}
+		>
+			{text}
+		</Markdown>
+	);
+}
+function ContentBlocks({
+	blocks,
+	snapshot,
+	toolOutput = false,
+	imageOffset = 0,
+}: {
+	blocks: Block[];
+	snapshot: Snapshot;
+	toolOutput?: boolean;
+	imageOffset?: number;
+}) {
+	let imageNumber = imageOffset;
+	return (
+		<>
+			{blocks.map((block, index) => {
+				if (block.type === "image")
+					return (
+						<NativeImage
+							key={block.ref}
+							block={block}
+							snapshot={snapshot}
+							imageNumber={++imageNumber}
+						/>
+					);
+				if (block.type === "tool")
+					return (
+						<p className="tool-call visually-hidden" key={index}>
+							{block.text}
+						</p>
+					);
+				if (block.type === "unavailable")
+					return (
+						<p key={index} role="status">
+							{block.text}
+						</p>
+					);
+				const content = (
+					<>
+						{toolOutput ? (
+							<pre className="tool-output" tabIndex={0}>
+								{block.text}
+							</pre>
+						) : (
+							<SafeMarkdown text={block.text} />
+						)}
+						{block.omittedChars && (
+							<p className="preview-note">
+								Preview shortened · {block.omittedChars.toLocaleString()}{" "}
+								characters omitted.
+							</p>
+						)}
+					</>
+				);
+				return block.type === "thinking" ? (
+					<details key={index} className="thinking-disclosure">
+						<summary>Thinking</summary>
+						{content}
+					</details>
+				) : (
+					<React.Fragment key={index}>{content}</React.Fragment>
+				);
+			})}
+		</>
+	);
+}
+/** Only exact native tool identities get friendly labels; icons never imply outcomes. */
+function ToolLabel({ name }: { name: string }) {
+	let label = name;
+	let path = "M7 4h10v4H7z M5 8h14v12H5z M9 12h6";
+	switch (name) {
+		case "read":
+		case "functions.read":
+			label = "Read";
+			path = "M5 3h10l4 4v14H5z M14 3v5h5 M8 12h8 M8 16h6";
+			break;
+		case "edit":
+		case "functions.edit":
+			label = "Edit";
+			path = "m4 16 12-12 4 4L8 20H4z M13 7l4 4";
+			break;
+		case "write":
+		case "functions.write":
+			label = "Write";
+			path = "M12 3H5v18h14v-7 M12 8h9 M17 3v10 M8 16h6";
+			break;
+		case "bash":
+		case "functions.bash":
+			label = "Shell";
+			path = "M3 4h18v16H3z m4 4 4 4-4 4 M13 16h4";
+	}
+	return (
+		<>
+			<svg
+				className="tool-icon"
+				aria-hidden="true"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			>
+				<path d={path} />
+			</svg>
+			<span className="tool-label">{label}</span>
+			{label !== name && <span className="visually-hidden"> ({name})</span>}
+		</>
+	);
+}
+/** Renders the bounded native conversation; media and Markdown never authorize actions. */
+export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
+	let imageNumber = 0;
+	const conversation: React.ReactNode[] = [];
+	let toolStack: React.ReactNode[] | undefined;
+	snapshot?.items.forEach((item) => {
+		const imageOffset = imageNumber;
+		imageNumber += item.blocks.filter((block) => block.type === "image").length;
+		const isTool = item.role.startsWith("tool:");
+		const mediaBlock = (block: Block) =>
+			block.type === "image" ||
+			(block.type === "unavailable" &&
+				block.text.startsWith("Image unavailable:"));
+		const output = isTool
+			? item.blocks.filter((block) => !mediaBlock(block))
+			: [];
+		const shortened = output.some((block) =>
+			block.type === "text" || block.type === "thinking"
+				? !!block.omittedChars
+				: block.type === "unavailable",
+		);
+		// Tool-call metadata remains accessible, but only actual results get visual rows.
+		const onlyToolCalls =
+			item.role === "assistant" &&
+			item.blocks.length > 0 &&
+			item.blocks.every((block) => block.type === "tool");
+		const redundantRole =
+			(isTool && !!output.length) || item.role === "assistant";
+		const article = (
+			<article
+				className={`message message-${item.role === "user" ? "user" : item.role === "assistant" ? "assistant" : "event"}${onlyToolCalls ? " visually-hidden" : ""}`}
+				key={item.id}
+				data-native-item={item.id}
+				aria-label={item.role}
+			>
+				<h3
+					className={`message-role${redundantRole ? " visually-hidden" : ""}`}
+				>
+					{item.role === "assistant" ? "Pi" : item.role}
+				</h3>
+				{isTool ? (
+					<>
+						{!!output.length && (
+							<details className="tool-disclosure">
+								<summary>
+									<ToolLabel name={item.role.slice(6).trimStart()} />
+									<span className="visually-hidden"> · output</span>
+									{shortened ? " · shortened" : ""}
+									<svg
+										className="tool-chevron"
+										aria-hidden="true"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="1.5"
+									>
+										<path d="m9 5 7 7-7 7" />
+									</svg>
+								</summary>
+								<ContentBlocks blocks={output} snapshot={snapshot} toolOutput />
+							</details>
+						)}
+						<ContentBlocks
+							blocks={item.blocks.filter(mediaBlock)}
+							snapshot={snapshot}
+							imageOffset={imageOffset}
+						/>
+					</>
+				) : (
+					<ContentBlocks
+						blocks={item.blocks}
+						snapshot={snapshot}
+						imageOffset={imageOffset}
+					/>
+				)}
+			</article>
+		);
+		// A single result owns its stack immediately, so appending cannot reparent disclosures.
+		if (isTool) {
+			if (!toolStack) {
+				toolStack = [];
+				conversation.push(
+					<div className="tool-stack" key={item.id}>
+						{toolStack}
+					</div>,
+				);
+			}
+			toolStack.push(article);
+		} else {
+			toolStack = undefined;
+			conversation.push(article);
+		}
+	});
+	return (
+		<>
+			{(snapshot?.omittedItems ?? 0) > 0 && (
+				<p className="history-notice">
+					{snapshot!.omittedItems} earlier messages omitted from this view.
+					Latest messages are shown.
+				</p>
+			)}
+			{snapshot?.truncated && snapshot.omittedItems === undefined && (
+				<p className="history-notice">
+					Some content is shortened or unavailable in this view.
+				</p>
+			)}
+			<section className="conversation" aria-label="Conversation">
+				{conversation}
+			</section>
+		</>
+	);
+}

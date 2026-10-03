@@ -1,0 +1,40 @@
+:root {
+	color-scheme: light dark;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	line-height: 1.6;
+	background: light-dark(#ffffff, #171717);
+	color: light-dark(#171717, #ececec);
+}
+* {
+	box-sizing: border-box;
+}
+body {
+	margin: 0;
+	font-size: 16px;
+}
+main {
+	max-width: 480px;
+	margin: auto;
+	padding: max(32px, env(safe-area-inset-top))
+		max(20px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom))
+		max(20px, env(safe-area-inset-left));
+	overflow-wrap: anywhere;
+}
+h1 {
+	font-size: 1.5rem;
+	line-height: 1.3;
+}
+img {
+	display: block;
+	border-radius: 16px;
+}
+a {
+	display: inline-flex;
+	align-items: center;
+	min-height: 44px;
+	color: light-dark(#245cc2, #91b8ff);
+}
+a:focus-visible {
+	outline: 3px solid currentColor;
+	outline-offset: 3px;
+}

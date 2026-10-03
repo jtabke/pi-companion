@@ -2,19 +2,35 @@ import Fastify, { type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import staticFiles from "@fastify/static";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ServerResponse } from "node:http";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { discover, peerResponse, readSnapshot, sendText, sendImage, sendStop, readQuestions, sendQuestionReply } from "./peer.js";
+import {
+	discover,
+	peerResponse,
+	readSnapshot,
+	sendText,
+	sendImage,
+	sendStop,
+	sendRename,
+	readQuestions,
+	sendQuestionReply,
+} from "./peer.js";
+import { authentication } from "./auth.js";
 import { controllers } from "./controller.js";
 import { normalizeImage, ImageError } from "./upload.js";
 import {
-	BrowserQuestionReplySchema, questionLimits, type BrowserQuestionReply, type Questions,
+	BrowserQuestionReplySchema,
+	questionLimits,
+	type BrowserQuestionReply,
+	type Questions,
 	ControlSchema,
 	BrowserTextSchema,
 	BrowserStopSchema,
+	BrowserRenameSchema,
+	type BrowserRename,
 	type BrowserStop,
 	BrowserImageSchema,
 	imageBodyBytes,
@@ -27,10 +43,18 @@ import {
 	type Snapshot,
 	type View,
 } from "../shared/protocol.js";
+declare module "fastify" {
+	interface FastifyInstance {
+		pairing: Pick<
+			ReturnType<typeof authentication>,
+			"issueCode" | "devices" | "revoke"
+		>;
+	}
+}
 export async function createGateway(options: {
 	runtime: string;
 	port: number;
-	secret: string;
+	stateDirectory: string;
 	publicOrigin?: string;
 	assets?: string;
 	pollMs?: number;
@@ -39,9 +63,15 @@ export async function createGateway(options: {
 	if (options.publicOrigin !== undefined) {
 		// Validate authored ASCII spelling before URL parsing can normalize ports, case or Unicode.
 		const label = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
-		if (!new RegExp(`^https://${label}\\.${label}\\.ts\\.net$`).test(options.publicOrigin) ||
-			new URL(options.publicOrigin).origin !== options.publicOrigin)
-			throw new Error("C2_PUBLIC_ORIGIN must be a canonical HTTPS Tailscale device origin");
+		if (
+			!new RegExp(`^https://${label}\\.${label}\\.ts\\.net$`).test(
+				options.publicOrigin,
+			) ||
+			new URL(options.publicOrigin).origin !== options.publicOrigin
+		)
+			throw new Error(
+				"C2_PUBLIC_ORIGIN must be a canonical HTTPS Tailscale device origin",
+			);
 	}
 	const origin = options.publicOrigin ?? `http://127.0.0.1:${options.port}`,
 		host = secure ? new URL(origin).host : `127.0.0.1:${options.port}`;
@@ -72,12 +102,46 @@ export async function createGateway(options: {
 				upgradeInsecureRequests: null,
 			},
 		},
-		hsts: secure ? { maxAge: 31536000, includeSubDomains: false, preload: false } : false,
+		hsts: secure
+			? { maxAge: 31536000, includeSubDomains: false, preload: false }
+			: false,
 	});
-	const sessions = new Map<string, number>();
+	const auth = authentication({
+		stateDirectory: options.stateDirectory,
+		origin,
+		runtime: options.runtime,
+	});
+	const sessions = auth.sessions;
 	const control = controllers();
-	let attempts = 0,
-		attemptWindow = Date.now();
+	// Fresh mutation discovery can precede the next poll; preserve unrelated leases on auth-only reconciliation.
+	let controlOwners: Identity[] = [];
+	const mediaStreams = new Map<
+		ServerResponse,
+		{ token: string; close: () => void }
+	>();
+	function reconcileAuthentication() {
+		control.reconcile(controlOwners, sessions);
+		for (const stream of streams.values())
+			if ((sessions.get(stream.token) ?? 0) < Date.now()) stream.close();
+		for (const stream of mediaStreams.values())
+			if ((sessions.get(stream.token) ?? 0) < Date.now()) stream.close();
+	}
+	function authority<T>(operation: () => T): T {
+		try {
+			return operation();
+		} finally {
+			reconcileAuthentication();
+		}
+	}
+	function expiry(token: string) {
+		return authority(() => auth.expiry(token));
+	}
+	const pairing = {
+		issueCode: () => authority(() => auth.issueCode()),
+		devices: () => authority(() => auth.devices()),
+		revoke: (id: string) => authority(() => auth.revoke(id)),
+	};
+	const gateway = app.decorate("pairing", pairing);
 	app.addHook("onRequest", async (req, reply) => {
 		reply
 			.header("Cache-Control", "no-store")
@@ -89,57 +153,118 @@ export async function createGateway(options: {
 		)
 			return reply.code(403).send({ error: "Origin denied" });
 		if (
-			["/api/control", "/api/text", "/api/image", "/api/stop", "/api/question-reply"].includes(req.url.split("?")[0]) &&
+			[
+				"/api/control",
+				"/api/text",
+				"/api/image",
+				"/api/stop",
+				"/api/rename",
+				"/api/question-reply",
+				"/api/forget",
+			].includes(req.url.split("?")[0]) &&
 			(req.headers.origin !== origin || req.headers["x-c2-csrf"] !== "input")
 		)
 			return reply.code(403).send({ error: "Origin denied" });
 		if (req.url.startsWith("/api/") && req.url !== "/api/pair") {
 			const token = req.cookies.c2;
-			if (!token || (sessions.get(token) ?? 0) < Date.now())
-				return reply.code(401).send({ error: "Pair in this browser first" });
+			try {
+				if (!token || (expiry(token) ?? 0) < Date.now())
+					return reply.code(401).send({ error: "Pair in this browser first" });
+			} catch {
+				return reply.code(503).send({ error: "Authentication unavailable" });
+			}
 		}
 	});
-	app.post<{ Body: { secret: string } }>(
+	const pairSchema = Type.Object(
+		{ code: Type.String({ pattern: "^[0-9]{6}$" }), remember: Type.Boolean() },
+		{ additionalProperties: false },
+	);
+	app.post<{ Body: { code: string; remember: boolean } }>(
 		"/api/pair",
 		{
-			schema: {
-				body: Type.Object(
-					{ secret: Type.String({ minLength: 1, maxLength: 128 }) },
-					{ additionalProperties: false },
-				),
+			preValidation: async (req, reply) => {
+				if (
+					req.headers.origin !== origin ||
+					req.headers["x-c2-csrf"] !== "pair"
+				)
+					return reply.code(403).send({ error: "Origin denied" });
+				if (req.url !== "/api/pair" || !Value.Check(pairSchema, req.body))
+					return reply.code(400).send({ error: "Invalid pairing input" });
 			},
 		},
 		async (req, reply) => {
-			// Same-origin header and explicit CSRF marker are required even before authentication.
-			if (req.headers.origin !== origin || req.headers["x-c2-csrf"] !== "pair")
-				return reply.code(403).send({ error: "Origin denied" });
-			if (Date.now() - attemptWindow > 60_000) {
-				attempts = 0;
-				attemptWindow = Date.now();
+			try {
+				const result = authority(() =>
+					auth.pair(req.body.code, req.body.remember),
+				);
+				if (!result.paired)
+					return reply
+						.code(result.reason === "invalid-code" ? 401 : 429)
+						.send({ error: "Pairing failed or limited" });
+				return reply
+					.setCookie("c2", result.token, {
+						httpOnly: true,
+						sameSite: "strict",
+						path: "/",
+						secure,
+						maxAge: result.remembered ? 30 * 24 * 60 * 60 : 8 * 60 * 60,
+						expires: new Date(result.expires),
+					})
+					.send({ paired: true });
+			} catch {
+				return reply.code(503).send({ error: "Authentication unavailable" });
 			}
-			if (++attempts > 10)
-				return reply.code(429).send({ error: "Pairing rate limit" });
-			const given = Buffer.from(req.body.secret),
-				expected = Buffer.from(options.secret);
-			if (given.length !== expected.length || !timingSafeEqual(given, expected))
-				return reply.code(401).send({ error: "Pairing failed" });
-			for (const [key, expires] of sessions)
-				if (expires < Date.now()) sessions.delete(key);
-			if (sessions.size >= 8)
-				return reply.code(429).send({ error: "Browser session limit" });
-			const token = randomBytes(32).toString("hex");
-			sessions.set(token, Date.now() + 8 * 60 * 60 * 1000);
-			return reply
-				.setCookie("c2", token, {
-					httpOnly: true,
-					sameSite: "strict",
-					path: "/",
-					maxAge: 8 * 60 * 60,
-					secure,
-				})
-				.send({ paired: true });
 		},
 	);
+	app.post(
+		"/api/forget",
+		{
+			preValidation: async (req, reply) => {
+				if (
+					req.url !== "/api/forget" ||
+					!Value.Check(
+						Type.Object({}, { additionalProperties: false }),
+						req.body,
+					)
+				)
+					return reply.code(400).send({ error: "Invalid input" });
+			},
+		},
+		async (req, reply) => {
+			try {
+				if (
+					(expiry(req.cookies.c2!) ?? 0) <= Date.now() ||
+					!authority(() => auth.forget(req.cookies.c2!))
+				)
+					return reply.code(401).send({ error: "Pair in this browser first" });
+				return reply
+					.clearCookie("c2", {
+						httpOnly: true,
+						sameSite: "strict",
+						path: "/",
+						secure,
+					})
+					.send({ forgotten: true });
+			} catch {
+				return reply.code(503).send({ error: "Authentication unavailable" });
+			}
+		},
+	);
+	function readAuthorized(
+		req: FastifyRequest,
+		reply: import("fastify").FastifyReply,
+	) {
+		try {
+			if (stopped || (expiry(req.cookies.c2!) ?? 0) < Date.now()) {
+				reply.code(401).send({ error: "Pair in this browser first" });
+				return false;
+			}
+			return true;
+		} catch {
+			reply.code(503).send({ error: "Authentication unavailable" });
+			return false;
+		}
+	}
 	type Scope = {
 		selected?: Identity;
 		view: View;
@@ -169,7 +294,11 @@ export async function createGateway(options: {
 					status.canonicalSession !== null &&
 					(counts.get(status.canonicalSession) ?? 0) > 1,
 			}))
-			.sort((a, b) => a.instance.localeCompare(b.instance));
+			.sort(
+				(a, b) =>
+					(b.lastInteraction ?? -1) - (a.lastInteraction ?? -1) ||
+					a.instance.localeCompare(b.instance),
+			);
 	}
 	function getScope(selected?: Identity): Scope | undefined {
 		const key = scopeKey(selected);
@@ -269,13 +398,18 @@ export async function createGateway(options: {
 	let counter = 0;
 	function publish(scope: Scope, next: View) {
 		// Trim only a scope-owned snapshot; include SSE framing in the complete event budget.
-		if (next.snapshot) next = { ...next, snapshot: { ...next.snapshot, items: [...next.snapshot.items] } };
+		if (next.snapshot)
+			next = {
+				...next,
+				snapshot: { ...next.snapshot, items: [...next.snapshot.items] },
+			};
 		while (
 			Buffer.byteLength(JSON.stringify(next)) + 128 > limits.snapshotBytes &&
 			next.snapshot?.items.length
 		) {
 			next.snapshot.items.shift();
 			next.snapshot.truncated = true;
+			next.snapshot.omittedItems = (next.snapshot.omittedItems ?? 0) + 1;
 		}
 		if (
 			JSON.stringify(next) === JSON.stringify(scope.view) &&
@@ -300,7 +434,10 @@ export async function createGateway(options: {
 			let questions: Questions | undefined;
 			if (current)
 				try {
-					[snapshot, questions] = await Promise.all([readSnapshot(options.runtime, current.registration), readQuestions(options.runtime, current.registration)]);
+					[snapshot, questions] = await Promise.all([
+						readSnapshot(options.runtime, current.registration),
+						readQuestions(options.runtime, current.registration),
+					]);
 				} catch {
 					/* Companion data unavailable, never touch Pi lifecycle. */
 				}
@@ -369,8 +506,12 @@ export async function createGateway(options: {
 	timer.unref();
 	const heartbeat = setInterval(() => {
 		for (const stream of streams.values()) {
-			if ((sessions.get(stream.token) ?? 0) < Date.now()) stream.close();
-			else stream.enqueue(": heartbeat\n\n");
+			try {
+				if ((expiry(stream.token) ?? 0) < Date.now()) stream.close();
+				else stream.enqueue(": heartbeat\n\n");
+			} catch {
+				stream.close();
+			}
 		}
 	}, 15000);
 	heartbeat.unref();
@@ -394,6 +535,7 @@ export async function createGateway(options: {
 			if (!scope)
 				return reply.code(429).send({ error: "Observer selection limit" });
 			await updateScope(scope);
+			if (!readAuthorized(req, reply)) return;
 			return scope.view;
 		},
 	);
@@ -413,6 +555,10 @@ export async function createGateway(options: {
 			} catch (error) {
 				scope.readers--;
 				throw error;
+			}
+			if (!readAuthorized(req, reply)) {
+				scope.readers--;
+				return;
 			}
 			// Admission and departure are rechecked after the asynchronous shared fetch.
 			if (
@@ -451,18 +597,50 @@ export async function createGateway(options: {
 
 	// Every introduced mutation uses the same authenticated, origin/CSRF and instance admission boundary.
 	app.setErrorHandler((error, req, reply) => {
-		if (["/api/control", "/api/text", "/api/image", "/api/stop", "/api/question-reply"].includes(req.routeOptions.url ?? ""))
+		if (
+			[
+				"/api/control",
+				"/api/text",
+				"/api/image",
+				"/api/stop",
+				"/api/rename",
+				"/api/question-reply",
+				"/api/forget",
+				"/api/pair",
+			].includes(req.routeOptions.url ?? "")
+		)
 			return reply
 				.code((error as { statusCode?: number }).statusCode ?? 500)
 				.send({ error: "Invalid input" });
 		return reply.send(error);
 	});
-	async function mutationGate(identity: Identity, cookie: string) {
+	// Mutation expiry includes equality; the read-auth hook above deliberately uses < instead.
+	function mutationSessionExpired(cookie: string) {
+		return (expiry(cookie) ?? 0) <= Date.now();
+	}
+	// Synchronous authority only. Route-specific stop/body/departure/abort gates stay at each caller.
+	function mutationLeaseValid(
+		identity: Identity,
+		cookie: string,
+		lease: string,
+	) {
+		return (
+			!mutationSessionExpired(cookie) && control.valid(identity, cookie, lease)
+		);
+	}
+	// Polling caches are not mutation authority: freshly prove generation, reachability and sole canonical ownership.
+	async function discoverMutationOwner(
+		identity: Identity,
+		cookie: string,
+		rename = false,
+	) {
 		const fresh = await discover(options.runtime);
-		if (stopped || fresh.overLimit || (sessions.get(cookie) ?? 0) <= Date.now())
+		if (stopped || fresh.overLimit || mutationSessionExpired(cookie))
 			return undefined;
+		controlOwners = fresh.peers.map((p) => p.registration);
 		const current = fresh.peers.find((p) => same(p.registration, identity));
-		if (!current) return undefined;
+		if (!current || (rename && current.status.summary.rename !== true))
+			return undefined;
 		const canonical = current.status.canonicalSession;
 		if (
 			canonical &&
@@ -486,11 +664,12 @@ export async function createGateway(options: {
 			if (!control.enter(body.instance))
 				return reply.code(429).send({ error: "Input admission limit" });
 			try {
-				if (!(await mutationGate(body, cookie)))
+				// Acquiring control needs no prior lease; change owns claim/takeover/renew/release rules.
+				if (!(await discoverMutationOwner(body, cookie)))
 					return reply
 						.code(409)
 						.send({ error: "Selected owner unavailable or conflicted" });
-				if (stopped || (sessions.get(cookie) ?? 0) <= Date.now())
+				if (stopped || mutationSessionExpired(cookie))
 					return reply.code(409).send({ error: "Browser control unavailable" });
 				const result = control.change(body, cookie);
 				if (!result)
@@ -507,6 +686,10 @@ export async function createGateway(options: {
 		"/api/text",
 		{
 			bodyLimit: 100_000,
+			preValidation: async (req, reply) => {
+				if (!Value.Check(BrowserTextSchema, req.body))
+					return reply.code(400).send({ error: "Invalid input" });
+			},
 			schema: {
 				body: BrowserTextSchema,
 				querystring: Type.Object({}, { additionalProperties: false }),
@@ -521,14 +704,9 @@ export async function createGateway(options: {
 			try {
 				if (!body.text.trim() || !control.valid(body, cookie, body.lease))
 					return reply.code(409).send({ error: "Browser control unavailable" });
-				const peer = await mutationGate(body, cookie);
+				const peer = await discoverMutationOwner(body, cookie);
 				// Final gate after the only pre-forward asynchronous operation. No await before fixed POST initiation.
-				if (
-					!peer ||
-					stopped ||
-					(sessions.get(cookie) ?? 0) <= Date.now() ||
-					!control.valid(body, cookie, body.lease)
-				)
+				if (!peer || stopped || !mutationLeaseValid(body, cookie, body.lease))
 					return reply
 						.code(409)
 						.send({ error: "Selected owner or browser control unavailable" });
@@ -538,6 +716,7 @@ export async function createGateway(options: {
 					generation: body.generation,
 					requestId: body.requestId,
 					text: body.text,
+					...(body.deliverAs ? { deliverAs: body.deliverAs } : {}),
 				});
 			} catch {
 				if (attempted)
@@ -552,127 +731,327 @@ export async function createGateway(options: {
 			}
 		},
 	);
-	app.post<{ Body: BrowserStop }>("/api/stop", {
-		bodyLimit: 1024,
-		schema: { body: BrowserStopSchema, querystring: Type.Object({}, { additionalProperties: false }) },
-		preValidation: async (req, reply) => {
-			if (req.url !== "/api/stop" || !Value.Check(BrowserStopSchema, req.body))
-				return reply.code(400).send({ error: "Invalid input" });
+	app.post<{ Body: BrowserStop }>(
+		"/api/stop",
+		{
+			bodyLimit: 1024,
+			schema: {
+				body: BrowserStopSchema,
+				querystring: Type.Object({}, { additionalProperties: false }),
+			},
+			preValidation: async (req, reply) => {
+				if (
+					req.url !== "/api/stop" ||
+					!Value.Check(BrowserStopSchema, req.body)
+				)
+					return reply.code(400).send({ error: "Invalid input" });
+			},
 		},
-	}, async (req, reply) => {
-		const body = req.body, cookie = req.cookies.c2!;
-		if (!control.enter(body.instance)) return reply.code(429).send({ error: "Input admission limit" });
-		let attempted = false;
-		const valid = () => !stopped && !req.raw.aborted && !reply.raw.destroyed &&
-			(sessions.get(cookie) ?? 0) > Date.now() && control.valid(body, cookie, body.lease);
-		try {
-			if (!valid()) return reply.code(409).send({ error: "Browser control unavailable" });
-			const peer = await mutationGate(body, cookie);
-			if (!peer || !valid()) return reply.code(409).send({ error: "Selected owner or browser control unavailable" });
-			attempted = true;
-			return await sendStop(options.runtime, peer, {
-				instance: body.instance, generation: body.generation, requestId: body.requestId,
-			});
-		} catch {
-			if (attempted) return { requestId: body.requestId, status: "uncertain", reason: "outcome-unconfirmed" };
-			return reply.code(409).send({ error: "Selected owner unavailable" });
-		} finally { control.leave(body.instance); }
-	});
+		async (req, reply) => {
+			const body = req.body,
+				cookie = req.cookies.c2!;
+			if (!control.enter(body.instance))
+				return reply.code(429).send({ error: "Input admission limit" });
+			let attempted = false;
+			const valid = () =>
+				!stopped &&
+				!req.raw.aborted &&
+				!reply.raw.destroyed &&
+				mutationLeaseValid(body, cookie, body.lease);
+			try {
+				if (!valid())
+					return reply.code(409).send({ error: "Browser control unavailable" });
+				const peer = await discoverMutationOwner(body, cookie);
+				if (!peer || !valid())
+					return reply
+						.code(409)
+						.send({ error: "Selected owner or browser control unavailable" });
+				attempted = true;
+				return await sendStop(options.runtime, peer, {
+					instance: body.instance,
+					generation: body.generation,
+					requestId: body.requestId,
+				});
+			} catch {
+				if (attempted)
+					return {
+						requestId: body.requestId,
+						status: "uncertain",
+						reason: "outcome-unconfirmed",
+					};
+				return reply.code(409).send({ error: "Selected owner unavailable" });
+			} finally {
+				control.leave(body.instance);
+			}
+		},
+	);
 
-    app.post<{ Body: BrowserQuestionReply }>("/api/question-reply", {
-        bodyLimit: questionLimits.bodyBytes,
-        // The strict TypeBox check below preserves authored nulls; AJV's union coercion does not.
-        schema: { querystring: Type.Object({}, { additionalProperties: false }) },
-        preValidation: async (req, reply) => {
-            if (req.url !== "/api/question-reply" || !Value.Check(BrowserQuestionReplySchema, req.body) || Buffer.byteLength(JSON.stringify(req.body.reply)) > questionLimits.replyBytes)
-                return reply.code(400).send({ error: "Invalid questionnaire reply" });
-        },
-    }, async (req, reply) => {
-        const body = req.body, cookie = req.cookies.c2!;
-        if (!control.enter(body.instance)) return reply.code(429).send({ error: "Input admission limit" });
-        let attempted = false;
-        const abort = new AbortController();
-        const departed = () => abort.abort();
-        reply.raw.once("close", departed);
-        const valid = () => !stopped && !req.raw.aborted && !reply.raw.destroyed && !abort.signal.aborted &&
-            (sessions.get(cookie) ?? 0) > Date.now() && control.valid(body, cookie, body.lease);
-        try {
-            if (!valid()) return reply.code(409).send({ error: "Browser control unavailable" });
-            const peer = await mutationGate(body, cookie);
-            if (!peer || !valid()) return reply.code(409).send({ error: "Selected owner or browser control unavailable" });
-            attempted = true;
-            return await sendQuestionReply(options.runtime, peer, { instance: body.instance, generation: body.generation, reply: body.reply }, abort.signal);
-        } catch {
-            if (attempted) return { invocationId: body.reply.invocationId, replyId: body.reply.replyId, status: "uncertain" };
-            return reply.code(409).send({ error: "Selected owner unavailable" });
-        } finally { reply.raw.off("close", departed); control.leave(body.instance); }
-    });
+	app.post<{ Body: BrowserRename }>(
+		"/api/rename",
+		{
+			bodyLimit: 2048,
+			schema: {
+				body: BrowserRenameSchema,
+				querystring: Type.Object({}, { additionalProperties: false }),
+			},
+			preValidation: async (req, reply) => {
+				if (
+					req.url !== "/api/rename" ||
+					!Value.Check(BrowserRenameSchema, req.body) ||
+					!req.body.name.trim() ||
+					req.body.name.length > 120
+				)
+					return reply.code(400).send({ error: "Invalid input" });
+			},
+		},
+		async (req, reply) => {
+			const body = req.body,
+				cookie = req.cookies.c2!;
+			if (!control.enter(body.instance))
+				return reply.code(429).send({ error: "Input admission limit" });
+			let attempted = false;
+			const valid = () =>
+				!stopped &&
+				!req.raw.aborted &&
+				!reply.raw.destroyed &&
+				mutationLeaseValid(body, cookie, body.lease);
+			try {
+				if (!valid())
+					return reply.code(409).send({ error: "Browser control unavailable" });
+				const peer = await discoverMutationOwner(body, cookie, true);
+				if (!peer || !valid())
+					return reply
+						.code(409)
+						.send({ error: "Selected owner or browser control unavailable" });
+				attempted = true;
+				return await sendRename(options.runtime, peer, {
+					instance: body.instance,
+					generation: body.generation,
+					requestId: body.requestId,
+					name: body.name,
+				});
+			} catch {
+				if (attempted)
+					return {
+						requestId: body.requestId,
+						status: "uncertain",
+						reason: "outcome-unconfirmed",
+					};
+				return reply.code(409).send({ error: "Selected owner unavailable" });
+			} finally {
+				control.leave(body.instance);
+			}
+		},
+	);
+
+	app.post<{ Body: BrowserQuestionReply }>(
+		"/api/question-reply",
+		{
+			bodyLimit: questionLimits.bodyBytes,
+			// The strict TypeBox check below preserves authored nulls; AJV's union coercion does not.
+			schema: { querystring: Type.Object({}, { additionalProperties: false }) },
+			preValidation: async (req, reply) => {
+				if (
+					req.url !== "/api/question-reply" ||
+					!Value.Check(BrowserQuestionReplySchema, req.body) ||
+					Buffer.byteLength(JSON.stringify(req.body.reply)) >
+						questionLimits.replyBytes
+				)
+					return reply.code(400).send({ error: "Invalid questionnaire reply" });
+			},
+		},
+		async (req, reply) => {
+			const body = req.body,
+				cookie = req.cookies.c2!;
+			if (!control.enter(body.instance))
+				return reply.code(429).send({ error: "Input admission limit" });
+			let attempted = false;
+			const abort = new AbortController();
+			const departed = () => abort.abort();
+			reply.raw.once("close", departed);
+			const valid = () =>
+				!stopped &&
+				!req.raw.aborted &&
+				!reply.raw.destroyed &&
+				!abort.signal.aborted &&
+				mutationLeaseValid(body, cookie, body.lease);
+			try {
+				if (!valid())
+					return reply.code(409).send({ error: "Browser control unavailable" });
+				const peer = await discoverMutationOwner(body, cookie);
+				if (!peer || !valid())
+					return reply
+						.code(409)
+						.send({ error: "Selected owner or browser control unavailable" });
+				attempted = true;
+				return await sendQuestionReply(
+					options.runtime,
+					peer,
+					{
+						instance: body.instance,
+						generation: body.generation,
+						reply: body.reply,
+					},
+					abort.signal,
+				);
+			} catch {
+				if (attempted)
+					return {
+						invocationId: body.reply.invocationId,
+						replyId: body.reply.replyId,
+						status: "uncertain",
+					};
+				return reply.code(409).send({ error: "Selected owner unavailable" });
+			} finally {
+				reply.raw.off("close", departed);
+				control.leave(body.instance);
+			}
+		},
+	);
 	// Reserve before Fastify collects/parses the large JSON body. No decoder/body waiting queue.
 	let imageActive = false;
-	const imageOperations = new WeakMap<FastifyRequest, { processing: boolean; departed: boolean; release: () => void }>();
-	app.addHook("onResponse", async (req) => { imageOperations.get(req)?.release(); });
+	const imageOperations = new WeakMap<
+		FastifyRequest,
+		{ processing: boolean; departed: boolean; release: () => void }
+	>();
+	app.addHook("onResponse", async (req) => {
+		imageOperations.get(req)?.release();
+	});
 	app.addHook("onError", async (req) => {
 		const op = imageOperations.get(req);
 		if (op && !op.processing) op.release();
 	});
-	app.post<{ Body: BrowserImage }>("/api/image", {
-		bodyLimit: imageBodyBytes,
-		schema: { body: BrowserImageSchema, querystring: Type.Object({}, { additionalProperties: false }) },
-		preValidation: async (req, reply) => {
-			// Reject type coercion of authored fields before Fastify's schema validator.
-			if (!Value.Check(BrowserImageSchema, req.body)) return reply.code(400).send({ error: "Invalid image input" });
+	app.post<{ Body: BrowserImage }>(
+		"/api/image",
+		{
+			bodyLimit: imageBodyBytes,
+			schema: {
+				body: BrowserImageSchema,
+				querystring: Type.Object({}, { additionalProperties: false }),
+			},
+			preValidation: async (req, reply) => {
+				// Reject type coercion of authored fields before Fastify's schema validator.
+				if (!Value.Check(BrowserImageSchema, req.body))
+					return reply.code(400).send({ error: "Invalid image input" });
+			},
+			onRequest: async (req, reply) => {
+				if (req.url !== "/api/image")
+					return reply
+						.code(400)
+						.send({ error: "Image input must be query-free" });
+				if (stopped || imageActive)
+					return reply
+						.code(429)
+						.send({ error: "Image operation already active" });
+				imageActive = true;
+				let released = false;
+				const bodyTimer = setTimeout(() => req.raw.destroy(), 5_000);
+				bodyTimer.unref();
+				const op = {
+					processing: false,
+					departed: false,
+					release: () => {
+						if (released) return;
+						released = true;
+						clearTimeout(bodyTimer);
+						imageActive = false;
+					},
+				};
+				imageOperations.set(req, op);
+				req.raw.once("end", () => clearTimeout(bodyTimer));
+				reply.raw.once("close", () => {
+					op.departed = true;
+					// A disconnected body/parser must finish unwinding before another image is admitted.
+					if (!op.processing)
+						setImmediate(() => {
+							if (!op.processing) op.release();
+						});
+				});
+			},
 		},
-		onRequest: async (req, reply) => {
-			if (req.url !== "/api/image") return reply.code(400).send({ error: "Image input must be query-free" });
-			if (stopped || imageActive) return reply.code(429).send({ error: "Image operation already active" });
-			imageActive = true;
-			let released = false;
-			const bodyTimer = setTimeout(() => req.raw.destroy(), 5_000);
-			bodyTimer.unref();
-			const op = { processing: false, departed: false, release: () => {
-				if (released) return;
-				released = true;
-				clearTimeout(bodyTimer);
-				imageActive = false;
-			} };
-			imageOperations.set(req, op);
-			req.raw.once("end", () => clearTimeout(bodyTimer));
-			reply.raw.once("close", () => {
-				op.departed = true;
-				// A disconnected body/parser must finish unwinding before another image is admitted.
-				if (!op.processing) setImmediate(() => { if (!op.processing) op.release(); });
-			});
+		async (req, reply) => {
+			const op = imageOperations.get(req)!,
+				body = req.body,
+				cookie = req.cookies.c2!;
+			op.processing = true;
+			let entered = false,
+				attempted = false;
+			const valid = () =>
+				!stopped &&
+				!op.departed &&
+				!req.raw.aborted &&
+				!reply.raw.destroyed &&
+				mutationLeaseValid(body, cookie, body.lease);
+			try {
+				entered = control.enter(body.instance);
+				if (!entered)
+					return reply.code(429).send({ error: "Input admission limit" });
+				if (
+					!valid() ||
+					!(await discoverMutationOwner(body, cookie)) ||
+					!valid()
+				)
+					return reply
+						.code(409)
+						.send({ error: "Selected owner or browser control unavailable" });
+				const start = performance.now();
+				let sourceBytes = 0,
+					normalizedBytes = 0;
+				const images = [];
+				for (const image of body.images) {
+					sourceBytes += Buffer.from(image.source, "base64").length;
+					if (sourceBytes > limits.imageBytes)
+						throw new ImageError(
+							"Total image source exceeds 4,000,000 bytes; nothing dispatched",
+						);
+				}
+				for (const image of body.images) {
+					const normalized = await normalizeImage(image, () => !valid(), start);
+					normalizedBytes += Buffer.from(normalized.image, "base64").length;
+					if (normalizedBytes > limits.imageBytes)
+						throw new ImageError(
+							"Total normalized images exceed 4,000,000 bytes; nothing dispatched",
+						);
+					images.push({ mime: image.mime, ...normalized });
+				}
+				if (!valid())
+					return reply
+						.code(409)
+						.send({ error: "Image request no longer authorized" });
+				const peer = await discoverMutationOwner(body, cookie);
+				// Fresh discovery plus final cookie/lease/departure/stop checks immediately before fixed forwarding.
+				if (!peer || !valid())
+					return reply
+						.code(409)
+						.send({ error: "Selected owner or browser control unavailable" });
+				attempted = true;
+				return await sendImage(options.runtime, peer, {
+					instance: body.instance,
+					generation: body.generation,
+					requestId: body.requestId,
+					text: body.text,
+					images,
+				});
+			} catch (error) {
+				if (attempted)
+					return {
+						requestId: body.requestId,
+						status: "uncertain",
+						reason: "outcome-unconfirmed",
+					};
+				return reply.code(error instanceof ImageError ? 400 : 409).send({
+					error:
+						error instanceof ImageError
+							? error.message
+							: "Selected owner unavailable",
+				});
+			} finally {
+				if (entered) control.leave(body.instance);
+				// All started native promises have settled; no Promise.race/destroy shortcut.
+				op.release();
+			}
 		},
-	}, async (req, reply) => {
-		const op = imageOperations.get(req)!, body = req.body, cookie = req.cookies.c2!;
-		op.processing = true;
-		let entered = false, attempted = false;
-		const valid = () => !stopped && !op.departed && !req.raw.aborted && !reply.raw.destroyed &&
-			(sessions.get(cookie) ?? 0) > Date.now() && control.valid(body, cookie, body.lease);
-		try {
-			entered = control.enter(body.instance);
-			if (!entered) return reply.code(429).send({ error: "Input admission limit" });
-			if (!valid() || !(await mutationGate(body, cookie)) || !valid())
-				return reply.code(409).send({ error: "Selected owner or browser control unavailable" });
-			const normalized = await normalizeImage(body, () => !valid());
-			if (!valid()) return reply.code(409).send({ error: "Image request no longer authorized" });
-			const peer = await mutationGate(body, cookie);
-			// Fresh discovery plus final cookie/lease/departure/stop checks immediately before fixed forwarding.
-			if (!peer || !valid()) return reply.code(409).send({ error: "Selected owner or browser control unavailable" });
-			attempted = true;
-			return await sendImage(options.runtime, peer, {
-				instance: body.instance, generation: body.generation, requestId: body.requestId,
-				text: body.text, mime: body.mime, ...normalized,
-			});
-		} catch (error) {
-			if (attempted) return { requestId: body.requestId, status: "uncertain", reason: "outcome-unconfirmed" };
-			return reply.code(error instanceof ImageError ? 400 : 409).send({ error: error instanceof ImageError ? error.message : "Selected owner unavailable" });
-		} finally {
-			if (entered) control.leave(body.instance);
-			// All started native promises have settled; no Promise.race/destroy shortcut.
-			op.release();
-		}
-	});
+	);
 	let activeMedia = 0;
 	app.get<{ Params: { instance: string; generation: string; ref: string } }>(
 		"/api/media/:instance/:generation/:ref",
@@ -709,12 +1088,17 @@ export async function createGateway(options: {
 				if (!released) {
 					released = true;
 					activeMedia--;
+					mediaStreams.delete(reply.raw);
 				}
 			};
 			reply.raw.once("close", release);
 			try {
 				// Recheck peer generation and native active-branch membership, never accept a path or remote URL.
 				const current = await readSnapshot(options.runtime, peer);
+				if (!readAuthorized(req, reply)) {
+					release();
+					return;
+				}
 				if (
 					!current.items.some((item) =>
 						item.blocks.some(
@@ -732,6 +1116,11 @@ export async function createGateway(options: {
 					peer,
 					`/media/${peer.generation}/${req.params.ref}`,
 				);
+				if (!readAuthorized(req, reply)) {
+					media.destroy();
+					release();
+					return;
+				}
 				const length = Number(media.headers["content-length"]),
 					mime = media.headers["content-type"];
 				if (
@@ -751,6 +1140,14 @@ export async function createGateway(options: {
 				media.on("data", (chunk) => {
 					bytes += chunk.length;
 					if (bytes > length) media.destroy();
+				});
+				mediaStreams.set(reply.raw, {
+					token: req.cookies.c2!,
+					close: () => {
+						media.destroy();
+						reply.raw.destroy();
+						release();
+					},
 				});
 				reply.raw.once("close", () => media.destroy());
 				media.once("close", release);
@@ -777,12 +1174,13 @@ export async function createGateway(options: {
 		clearInterval(heartbeat);
 		for (const stream of streams.values()) stream.close();
 		streams.clear();
+		for (const stream of mediaStreams.values()) stream.close();
 	});
 	app.addHook("onClose", async () => {
 		control.clear();
-		sessions.clear();
+		controlOwners = [];
 		scopes.clear();
 		peers = [];
 	});
-	return app;
+	return gateway;
 }

@@ -3,6 +3,8 @@ import { chromium, webkit } from "playwright";
 import { readFileSync, mkdirSync, writeFileSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { chooseSession } from "./choose-session.mjs";
+
 const [mode, root] = process.argv.slice(2);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 if (mode === "capture") {
@@ -35,40 +37,84 @@ if (mode === "capture") {
 	}
 } else if (["background-switch", "background-recover"].includes(mode)) {
 	const base = "http://127.0.0.1:4394";
-	const owners = JSON.parse(readFileSync(join(root, "background-owners.json"), "utf8"));
+	const owners = JSON.parse(
+		readFileSync(join(root, "background-owners.json"), "utf8"),
+	);
 	const browser = await chromium.launch();
 	try {
 		const context = await browser.newContext();
+		await context.addCookies([
+			{
+				name: "c2",
+				value: process.env.C2_TEST_COOKIE.split("=")[1],
+				url: base,
+				httpOnly: true,
+				sameSite: "Strict",
+			},
+		]);
 		const page = await context.newPage();
 		const streams = [];
-		page.on("request", request => {
+		page.on("request", (request) => {
 			const url = new URL(request.url());
-			if (url.pathname === "/api/events") streams.push(url.searchParams.get("instance"));
+			if (url.pathname === "/api/events")
+				streams.push(url.searchParams.get("instance"));
 		});
 		await page.goto(base);
-		await page.getByLabel("Terminal pairing secret").fill(process.env.C2_TEST_SECRET);
-		await page.getByRole("button", { name: "Pair browser" }).click();
-		await page.waitForFunction(() => document.querySelector("#session")?.options.length === 3);
-		const order = mode === "background-switch" ? [owners.a, owners.b, owners.a] : [owners.a];
+		await page.getByRole("button", { name: /^Open sessions:/ }).waitFor();
+		const order =
+			mode === "background-switch"
+				? [owners.a, owners.b, owners.a]
+				: [owners.a];
 		for (const owner of order) {
 			const before = streams.length;
-			const selectedStream = page.waitForRequest(request => {
+			const selectedStream = page.waitForRequest((request) => {
 				const url = new URL(request.url());
-				return url.pathname === "/api/events" && url.searchParams.get("instance") === owner.instance && url.searchParams.get("generation") === owner.generation;
+				return (
+					url.pathname === "/api/events" &&
+					url.searchParams.get("instance") === owner.instance &&
+					url.searchParams.get("generation") === owner.generation
+				);
 			});
-			await page.getByLabel("Select live session").selectOption(owner.instance);
+			await chooseSession(page, owner.instance);
 			await selectedStream;
-			await page.waitForFunction(() => document.querySelector("header")?.textContent.includes("Parent: idle"));
-			await page.waitForFunction(() => !document.body.textContent.includes("Selected conversation disconnected or unavailable."));
-			if (!streams.slice(before).includes(owner.instance)) throw Error("Selected SSE missing");
-			const view = await (await context.request.get(`${base}/api/snapshot?instance=${owner.instance}&generation=${owner.generation}`)).json();
-			if (view.connection !== "connected" || view.snapshot?.instance !== owner.instance || view.snapshot?.generation !== owner.generation || view.snapshot.parent !== "idle" || view.snapshot.background !== "unobserved" || view.conflict)
+			await page.waitForFunction(() =>
+				document.querySelector("header")?.textContent.includes("Ready"),
+			);
+			await page.waitForFunction(
+				() =>
+					!document.body.textContent.includes(
+						"Selected conversation disconnected or unavailable.",
+					),
+			);
+			if (!streams.slice(before).includes(owner.instance))
+				throw Error("Selected SSE missing");
+			const view = await (
+				await context.request.get(
+					`${base}/api/snapshot?instance=${owner.instance}&generation=${owner.generation}`,
+				)
+			).json();
+			if (
+				view.connection !== "connected" ||
+				view.snapshot?.instance !== owner.instance ||
+				view.snapshot?.generation !== owner.generation ||
+				view.snapshot.parent !== "idle" ||
+				view.snapshot.background !== "unobserved" ||
+				view.conflict
+			)
 				throw Error("Wrong owner or misleading background status");
 		}
-		if (await page.evaluate(() => localStorage.length + sessionStorage.length)) throw Error("Private browser state persisted");
+		if (await page.evaluate(() => localStorage.length + sessionStorage.length))
+			throw Error("Private browser state persisted");
 		await page.close(); // Real selected EventSource disconnect, not a synthetic server callback.
 		await context.close();
-		console.log(JSON.stringify({ selectedOwners: mode === "background-switch" ? ["a", "b", "a"] : ["a"], shippedUiAuthSse: true, parentIdleBackgroundUnobserved: true, browserClosed: true }));
+		console.log(
+			JSON.stringify({
+				selectedOwners: mode === "background-switch" ? ["a", "b", "a"] : ["a"],
+				shippedUiAuthSse: true,
+				parentIdleBackgroundUnobserved: true,
+				browserClosed: true,
+			}),
+		);
 	} finally {
 		await browser.close();
 	}
@@ -93,15 +139,18 @@ if (mode === "capture") {
 			const context = await browser.newContext({
 				viewport: { width: 390, height: 844 },
 			});
+			await context.addCookies([
+				{
+					name: "c2",
+					value: process.env.C2_TEST_COOKIE.split("=")[1],
+					url: base,
+					httpOnly: true,
+					sameSite: "Strict",
+				},
+			]);
 			const page = await context.newPage();
 			await page.goto(base);
-			await page
-				.getByLabel("Terminal pairing secret")
-				.fill(process.env.C2_TEST_SECRET);
-			await page.getByRole("button", { name: "Pair browser" }).click();
-			await page.waitForFunction(
-				() => document.querySelector("#session")?.options.length === 3,
-			);
+			await page.getByRole("button", { name: /^Open sessions:/ }).waitFor();
 			const list = await (
 				await context.request.get(base + "/api/snapshot")
 			).json();
@@ -127,9 +176,7 @@ if (mode === "capture") {
 			});
 			async function check(page, owner, enlarge = true) {
 				const { snapshot, fixture, settled } = owner;
-				await page
-					.getByLabel("Select live session")
-					.selectOption(snapshot.instance);
+				await chooseSession(page, snapshot.instance);
 				await page.waitForFunction(
 					(generation) =>
 						document
@@ -138,7 +185,7 @@ if (mode === "capture") {
 					snapshot.generation,
 				);
 				const image = page.getByRole("img", {
-					name: "Native Pi image",
+					name: /^Native Pi image \d+$/,
 					exact: true,
 				});
 				await image.scrollIntoViewIfNeeded();
@@ -169,7 +216,7 @@ if (mode === "capture") {
 						(img) => img.getBoundingClientRect().width,
 					);
 					await page
-						.getByRole("button", { name: "Enlarge native Pi image" })
+						.getByRole("button", { name: /^Enlarge native Pi image \d+$/ })
 						.click();
 					await page.locator(".pswp--open").waitFor();
 					await page.waitForFunction(
@@ -281,14 +328,21 @@ if (mode === "capture") {
 				} else {
 					await page
 						.getByText(
-							"Selected conversation disconnected or unavailable. Cached content is not live.",
+							"Disconnected — cached content is read-only; drafts stay local.",
 							{ exact: true },
 						)
 						.waitFor();
+					await page
+						.getByRole("button", {
+							name: `Open sessions: ${b.snapshot.session} · ${b.snapshot.project}`,
+							exact: true,
+						})
+						.waitFor();
 					await page.waitForFunction(
 						(instance) =>
-							document.querySelector("#session").value === instance &&
-							document.querySelector("#session").options.length === 3,
+							new URLSearchParams(location.hash.slice(1))
+								.get("session")
+								?.split(":")[0] === instance,
 						b.snapshot.instance,
 					);
 					if (
@@ -325,3 +379,6 @@ if (mode === "capture") {
 	}
 	console.log(JSON.stringify(evidence));
 } else throw Error("Explicit fixture mode required");
+
+// Credentials exist only in this disposable client process and contexts.
+delete process.env.C2_TEST_COOKIE;

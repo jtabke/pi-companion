@@ -1,0 +1,21 @@
+{
+	"$schema": "./node_modules/fallow/schema.json",
+	"entry": [
+		"src/extension/bridge.ts",
+		"src/gateway/cli.ts",
+		"web/src/main.tsx",
+		"web/public/sw.js",
+		"web/public/offline.css",
+		"tests/*.mjs",
+		"tests/input-fixture.ts",
+		"probes/native-media-extension.ts"
+	],
+	"ignorePatterns": [
+		"integrations/rpiv-mono/**",
+		".cache/**",
+		"test-results/**",
+		"playwright-report/**",
+		"probes/c1-extension.ts"
+	],
+	"ignoreDependencies": ["@earendil-works/pi-ai"]
+}

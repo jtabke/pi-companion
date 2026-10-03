@@ -1,6 +1,16 @@
 import { it, expect } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, chmodSync, rmSync, statSync } from "node:fs";
+import {
+	mkdtempSync,
+	chmodSync,
+	rmSync,
+	statSync,
+	mkdirSync,
+	readFileSync,
+	realpathSync,
+	writeFileSync,
+} from "node:fs";
+import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request } from "node:http";
@@ -11,7 +21,13 @@ import { createGateway } from "../src/gateway/server.js";
 import { limits } from "../src/shared/protocol.js";
 function start(runtime: string, publicOrigin?: string) {
 	return spawn(process.execPath, ["dist/gateway/cli.js"], {
-		env: { PATH: process.env.PATH, C2_RUNTIME: runtime, C2_PORT: "4392", ...(publicOrigin === undefined ? {} : { C2_PUBLIC_ORIGIN: publicOrigin }) },
+		env: {
+			PATH: process.env.PATH,
+			C2_RUNTIME: runtime,
+			C2_AUTH_DIR: join(runtime, "auth"),
+			C2_PORT: "4392",
+			...(publicOrigin === undefined ? {} : { C2_PUBLIC_ORIGIN: publicOrigin }),
+		},
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 }
@@ -20,7 +36,7 @@ function ready(child: ChildProcess) {
 		let text = "";
 		child.stdout!.on("data", (data) => {
 			text += data;
-			if (text.includes("Pairing secret"))
+			if (text.includes("Pairing code"))
 				resolve(text.match(/browser\): (\S+)/)![1]);
 		});
 		child.once("exit", () => reject(new Error("Gateway exited before ready")));
@@ -43,7 +59,7 @@ it("parallel launch exclusion, retained inode and crash kernel release; real SSE
 	const connections: import("node:http").ClientRequest[] = [];
 	try {
 		child = start(path);
-		const secret = await ready(child);
+		const code = await ready(child);
 		const inode = statSync(join(path, "gateway.lock")).ino;
 		const second = start(path);
 		expect(await exit(second)).toBe(1);
@@ -55,7 +71,7 @@ it("parallel launch exclusion, retained inode and crash kernel release; real SSE
 				"x-c2-csrf": "pair",
 				"content-type": "application/json",
 			},
-			body: JSON.stringify({ secret }),
+			body: JSON.stringify({ code, remember: false }),
 		});
 		expect(pair.status).toBe(200);
 		const cookie = pair.headers.get("set-cookie")!.split(";")[0];
@@ -113,65 +129,192 @@ it("parallel launch exclusion, retained inode and crash kernel release; real SSE
 }, 20000);
 
 it("C5 production CLI selects the private HTTPS URL over loopback TCP, rejects invalid env and releases flock on exit", async () => {
-	const path = mkdtempSync("/tmp/c5-cli-"); chmodSync(path, 0o700);
-	const publicOrigin = "https://companion.example.ts.net", host = "companion.example.ts.net";
-	const children: ChildProcess[] = [], connections: import("node:http").ClientRequest[] = [];
+	const path = mkdtempSync("/tmp/c5-cli-");
+	chmodSync(path, 0o700);
+	const publicOrigin = "https://companion.example.ts.net",
+		host = "companion.example.ts.net";
+	const children: ChildProcess[] = [],
+		connections: import("node:http").ClientRequest[] = [];
 	const launch = (origin?: string) => {
-		const child = start(path, origin); children.push(child);
+		const child = start(path, origin);
+		children.push(child);
 		const output = { stdout: "", stderr: "" };
-		child.stdout!.on("data", data => { output.stdout += data; });
-		child.stderr!.on("data", data => { output.stderr += data; });
+		child.stdout!.on("data", (data) => {
+			output.stdout += data;
+		});
+		child.stderr!.on("data", (data) => {
+			output.stderr += data;
+		});
 		return { child, output };
 	};
-	const tcp = (url: string, headers: Record<string, string>, payload?: object) => new Promise<{ status: number; headers: import("node:http").IncomingHttpHeaders; body: string; address?: string }>((resolve, reject) => {
-		const req = request({ host: "127.0.0.1", port: 4392, path: url, method: payload ? "POST" : "GET", headers: { ...headers, ...(payload ? { "content-type": "application/json" } : {}) } }, res => {
-			const address = res.socket.remoteAddress; let body = "";
-			res.setEncoding("utf8"); res.on("data", chunk => { body += chunk; });
-			res.on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body, address }));
+	const tcp = (
+		url: string,
+		headers: Record<string, string>,
+		payload?: object,
+	) =>
+		new Promise<{
+			status: number;
+			headers: import("node:http").IncomingHttpHeaders;
+			body: string;
+			address?: string;
+		}>((resolve, reject) => {
+			const req = request(
+				{
+					host: "127.0.0.1",
+					port: 4392,
+					path: url,
+					method: payload ? "POST" : "GET",
+					headers: {
+						...headers,
+						...(payload ? { "content-type": "application/json" } : {}),
+					},
+				},
+				(res) => {
+					const address = res.socket.remoteAddress;
+					let body = "";
+					res.setEncoding("utf8");
+					res.on("data", (chunk) => {
+						body += chunk;
+					});
+					res.on("end", () =>
+						resolve({
+							status: res.statusCode!,
+							headers: res.headers,
+							body,
+							address,
+						}),
+					);
+				},
+			);
+			connections.push(req);
+			req.on("error", reject);
+			req.end(payload ? JSON.stringify(payload) : undefined);
 		});
-		connections.push(req); req.on("error", reject); req.end(payload ? JSON.stringify(payload) : undefined);
-	});
 	try {
-		for (const invalid of ["", publicOrigin + "/", publicOrigin + ":443", "http://companion.example.ts.net"]) {
+		for (const invalid of [
+			"",
+			publicOrigin + "/",
+			publicOrigin + ":443",
+			"http://companion.example.ts.net",
+		]) {
 			const { child, output } = launch(invalid);
-			const result = await Promise.race([exit(child), ready(child).then(() => "unexpected-ready", () => exit(child))]);
-			if (result === "unexpected-ready") { child.kill("SIGTERM"); await exit(child); }
+			const result = await Promise.race([
+				exit(child),
+				ready(child).then(
+					() => "unexpected-ready",
+					() => exit(child),
+				),
+			]);
+			if (result === "unexpected-ready") {
+				child.kill("SIGTERM");
+				await exit(child);
+			}
 			expect(result).toBe(1);
 			expect(output.stdout).toBe("");
-			expect(output.stderr).toBe("Gateway blocked: unsafe runtime, occupied port, or unavailable local build.\n");
+			expect(output.stderr).toBe(
+				"Gateway blocked: unsafe runtime, occupied port, or unavailable local build.\n",
+			);
 		}
-		const { child, output } = launch(publicOrigin), secret = await ready(child);
-		expect(output.stdout).toBe(`Pi observer: ${publicOrigin}\nPairing secret (submit in browser): ${secret}\n`);
+		const { child, output } = launch(publicOrigin),
+			code = await ready(child);
+		expect(output.stdout).toBe(
+			`Pi observer: ${publicOrigin}\nPairing code (submit in browser): ${code}\nExpires: ${output.stdout.split("Expires: ")[1]}`,
+		);
 		expect(output.stderr).toBe("");
 		const inode = statSync(join(path, "gateway.lock")).ino;
-		const pair = await tcp("/api/pair", { host, origin: publicOrigin, "x-c2-csrf": "pair", "x-forwarded-host": host, "x-forwarded-proto": "https" }, { secret });
-		expect(pair.address).toBe("127.0.0.1"); expect(pair.status).toBe(200);
+		const pair = await tcp(
+			"/api/pair",
+			{
+				host,
+				origin: publicOrigin,
+				"x-c2-csrf": "pair",
+				"x-forwarded-host": host,
+				"x-forwarded-proto": "https",
+			},
+			{ code, remember: false },
+		);
+		expect(pair.address).toBe("127.0.0.1");
+		expect(pair.status).toBe(200);
 		expect(JSON.parse(pair.body)).toEqual({ paired: true });
 		expect(pair.headers["set-cookie"]![0]).toContain("Secure");
 		expect(pair.headers["strict-transport-security"]).toBe("max-age=31536000");
 		const cookie = pair.headers["set-cookie"]![0].split(";")[0];
 		expect((await tcp("/api/snapshot", { host, cookie })).status).toBe(200);
 		expect((await tcp("/api/snapshot", { host })).status).toBe(401);
-		expect((await tcp("/api/snapshot", { host: "127.0.0.1:4392", cookie, "x-forwarded-host": host, "x-forwarded-proto": "https", "tailscale-user-login": "owner@example.invalid" })).status).toBe(403);
-		expect((await tcp("/api/pair", { host, "x-c2-csrf": "pair" }, { secret })).status).toBe(403);
-		const sse = request({ host: "127.0.0.1", port: 4392, path: "/api/events", headers: { host, cookie, "x-forwarded-host": "evil.invalid", "x-forwarded-proto": "http" } });
+		expect(
+			(
+				await tcp("/api/snapshot", {
+					host: "127.0.0.1:4392",
+					cookie,
+					"x-forwarded-host": host,
+					"x-forwarded-proto": "https",
+					"tailscale-user-login": "owner@example.invalid",
+				})
+			).status,
+		).toBe(403);
+		expect(
+			(
+				await tcp(
+					"/api/pair",
+					{ host, "x-c2-csrf": "pair" },
+					{ code, remember: false },
+				)
+			).status,
+		).toBe(403);
+		const sse = request({
+			host: "127.0.0.1",
+			port: 4392,
+			path: "/api/events",
+			headers: {
+				host,
+				cookie,
+				"x-forwarded-host": "evil.invalid",
+				"x-forwarded-proto": "http",
+			},
+		});
 		connections.push(sse);
-		const stream = await new Promise<import("node:http").IncomingMessage>((resolve, reject) => { sse.once("response", resolve); sse.on("error", reject); sse.end(); });
+		const stream = await new Promise<import("node:http").IncomingMessage>(
+			(resolve, reject) => {
+				sse.once("response", resolve);
+				sse.on("error", reject);
+				sse.end();
+			},
+		);
 		expect(stream.statusCode).toBe(200);
-		expect(stream.headers["strict-transport-security"]).toBe("max-age=31536000");
-		await new Promise<void>(resolve => { let body = ""; stream.on("data", chunk => { body += chunk; if (body.includes(": connected")) resolve(); }); });
+		expect(stream.headers["strict-transport-security"]).toBe(
+			"max-age=31536000",
+		);
+		await new Promise<void>((resolve) => {
+			let body = "";
+			stream.on("data", (chunk) => {
+				body += chunk;
+				if (body.includes(": connected")) resolve();
+			});
+		});
 		sse.destroy();
-		const second = launch(publicOrigin); expect(await exit(second.child)).toBe(1);
-		expect(second.output.stderr).toBe("Gateway blocked: another gateway owns this runtime directory.\n");
-		child.kill("SIGTERM"); expect(await exit(child)).toBe(0);
-		const local = launch(), localSecret = await ready(local.child);
-		expect(local.output.stdout).toBe(`Pi observer: http://127.0.0.1:4392\nPairing secret (submit in browser): ${localSecret}\n`);
+		const second = launch(publicOrigin);
+		expect(await exit(second.child)).toBe(1);
+		expect(second.output.stderr).toBe(
+			"Gateway blocked: another gateway owns this runtime directory.\n",
+		);
+		child.kill("SIGTERM");
+		expect(await exit(child)).toBe(0);
+		const local = launch(),
+			localCode = await ready(local.child);
+		expect(local.output.stdout).toBe(
+			`Pi observer: http://127.0.0.1:4392\nPairing code (submit in browser): ${localCode}\nExpires: ${local.output.stdout.split("Expires: ")[1]}`,
+		);
 		expect(statSync(join(path, "gateway.lock")).ino).toBe(inode);
 		expect((await tcp("/", { host })).status).toBe(403);
-		local.child.kill("SIGTERM"); expect(await exit(local.child)).toBe(0);
+		local.child.kill("SIGTERM");
+		expect(await exit(local.child)).toBe(0);
 	} finally {
 		for (const req of connections) req.destroy();
-		for (const child of children) if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); await exit(child); }
+		for (const child of children)
+			if (child.exitCode === null && child.signalCode === null) {
+				child.kill("SIGKILL");
+				await exit(child);
+			}
 		rmSync(path, { recursive: true, force: true });
 	}
 }, 20000);
@@ -255,7 +398,7 @@ function largeTextContext(escaped = false) {
 					type: "text",
 					text:
 						(index === 0 ? marker : "x") +
-						(escaped ? "\u0000" : "x").repeat(limits.blockText - 1),
+						(escaped ? "\u0000" : "x").repeat(limits.text / 8 - 1),
 				})),
 			},
 		},
@@ -267,7 +410,10 @@ function largeTextContext(escaped = false) {
 		},
 	};
 }
-async function pairTcp(url: string) {
+async function pairTcp(
+	url: string,
+	app: Awaited<ReturnType<typeof createGateway>>,
+) {
 	const pair = await fetch(url + "/api/pair", {
 		method: "POST",
 		headers: {
@@ -275,7 +421,10 @@ async function pairTcp(url: string) {
 			"x-c2-csrf": "pair",
 			"content-type": "application/json",
 		},
-		body: JSON.stringify({ secret: "large-sse-fixture" }),
+		body: JSON.stringify({
+			code: app.pairing.issueCode().code,
+			remember: false,
+		}),
 	});
 	expect(pair.status).toBe(200);
 	return pair.headers.get("set-cookie")!.split(";")[0];
@@ -293,7 +442,7 @@ it("delivers complete large SSE initial state, publications, ordered replay late
 	const app = await createGateway({
 		runtime: path,
 		port: 4395,
-		secret: "large-sse-fixture",
+		stateDirectory: join(path, "auth"),
 		assets: join(process.cwd(), "dist/web"),
 		pollMs: 20,
 	});
@@ -301,7 +450,7 @@ it("delivers complete large SSE initial state, publications, ordered replay late
 	try {
 		await app.listen({ host: "127.0.0.1", port: 4395 });
 		const url = "http://127.0.0.1:4395",
-			cookie = await pairTcp(url);
+			cookie = await pairTcp(url, app);
 		const first = await openSse(url, cookie);
 		readers.push(first);
 		expect(first.res.statusCode).toBe(200);
@@ -310,7 +459,7 @@ it("delivers complete large SSE initial state, publications, ordered replay late
 		expect(JSON.stringify(initial.data).length).toBeGreaterThan(limits.text);
 		expect(initial.data.snapshot?.items[0].blocks).toHaveLength(8);
 		for (const block of initial.data.snapshot!.items[0].blocks)
-			expect(block.type === "text" && block.text.length).toBe(limits.blockText);
+			expect(block.type === "text" && block.text.length).toBe(limits.text / 8);
 		const generation = initial.data.snapshot!.generation;
 		for (const marker of ["b", "c", "d"]) {
 			fixture.setMarker(marker);
@@ -366,7 +515,7 @@ it("bounds paused TCP readers by queued bytes and drain deadline, releases admis
 	const app = await createGateway({
 		runtime: path,
 		port: 4396,
-		secret: "large-sse-fixture",
+		stateDirectory: join(path, "auth"),
 		assets: join(process.cwd(), "dist/web"),
 		pollMs: 20,
 	});
@@ -378,7 +527,7 @@ it("bounds paused TCP readers by queued bytes and drain deadline, releases admis
 	try {
 		await app.listen({ host: "127.0.0.1", port: 4396 });
 		const url = "http://127.0.0.1:4396",
-			cookie = await pairTcp(url);
+			cookie = await pairTcp(url, app);
 		const slow = await openSse(url, cookie, undefined, true);
 		readers.push(slow);
 		const response = responses.at(-1)!;
@@ -478,7 +627,7 @@ it("C3 same-cookie readers keep independent selection/replay, unknown cross-scop
 	const app = await createGateway({
 		runtime: path,
 		port: 4395,
-		secret: "large-sse-fixture",
+		stateDirectory: join(path, "auth"),
 		assets: join(process.cwd(), "dist/web"),
 		pollMs: 20,
 	});
@@ -486,7 +635,7 @@ it("C3 same-cookie readers keep independent selection/replay, unknown cross-scop
 	try {
 		await app.listen({ host: "127.0.0.1", port: 4395 });
 		const url = "http://127.0.0.1:4395",
-			cookie = await pairTcp(url);
+			cookie = await pairTcp(url, app);
 		const ar = await openSse(url, cookie, undefined, false, first);
 		readers.push(ar);
 		await expect
@@ -559,3 +708,147 @@ it("C3 same-cookie readers keep independent selection/replay, unknown cross-scop
 		rmSync(path, { recursive: true, force: true });
 	}
 }, 20000);
+
+it("restart launcher builds before dispatch from its own root and propagates build/CLI failures and signals", async () => {
+	const root = realpathSync(mkdtempSync("/tmp/c2-restart-launcher-"));
+	try {
+		mkdirSync(join(root, "scripts"));
+		mkdirSync(join(root, "dist/gateway"), { recursive: true });
+		writeFileSync(
+			join(root, "scripts/restart.mjs"),
+			readFileSync("scripts/restart.mjs"),
+		);
+		writeFileSync(
+			join(root, "build.mjs"),
+			`import fs from 'node:fs'; fs.appendFileSync('journal', JSON.stringify({step:'build', args:process.argv.slice(2), cwd:process.cwd()})+'\\n'); if(process.env.MODE==='hang'){console.log('build waiting');setInterval(()=>{},1000)}else process.exitCode=process.env.MODE==='build-fail'?7:0;`,
+		);
+		writeFileSync(
+			join(root, "dist/gateway/cli.js"),
+			`const fs=require('node:fs');fs.appendFileSync('journal',JSON.stringify({step:'restart',args:process.argv.slice(2),cwd:process.cwd()})+'\\n');process.exitCode=process.env.MODE==='restart-fail'?9:0;`,
+		);
+		for (const [mode, expected] of [
+			["good", 0],
+			["build-fail", 7],
+			["restart-fail", 9],
+			["hang", null],
+			["unsupported-arguments", 1],
+		] as const) {
+			writeFileSync(join(root, "journal"), "");
+			const child = spawn(
+				process.execPath,
+				[
+					join(root, "scripts/restart.mjs"),
+					...(mode === "unsupported-arguments" ? ["--port", "4318"] : []),
+				],
+				{
+					cwd: "/tmp",
+					env: {
+						PATH: root,
+						npm_execpath: join(root, "build.mjs"),
+						MODE: mode,
+					},
+					stdio: ["ignore", "pipe", "pipe"],
+				},
+			);
+			let output = "",
+				error = "";
+			child.stdout!.on("data", (data) => (output += data));
+			child.stderr!.on("data", (data) => (error += data));
+			try {
+				if (mode === "hang") {
+					await expect.poll(() => output).toContain("build waiting");
+					child.kill("SIGTERM");
+				}
+				expect(await exit(child)).toBe(expected);
+				if (mode === "unsupported-arguments") {
+					expect(error).toBe("Pi companion: restart accepts no arguments\n");
+					expect(readFileSync(join(root, "journal"), "utf8")).toBe("");
+					continue;
+				}
+				if (mode === "hang") expect(child.signalCode).toBe("SIGTERM");
+				const journal = readFileSync(join(root, "journal"), "utf8")
+					.trim()
+					.split("\n")
+					.map((line) => JSON.parse(line));
+				expect(journal).toEqual(
+					mode === "build-fail" || mode === "hang"
+						? [{ step: "build", args: ["run", "build"], cwd: root }]
+						: [
+								{ step: "build", args: ["run", "build"], cwd: root },
+								{ step: "restart", args: ["restart"], cwd: root },
+							],
+				);
+			} finally {
+				if (child.exitCode === null && child.signalCode === null) {
+					child.kill("SIGTERM");
+					await exit(child);
+				}
+			}
+		}
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+}, 10000);
+
+it("restart launcher native path selection preserves fixtures/non-Darwin and replaces only missing CLI or the known macOS shim", () => {
+	const source =
+		readFileSync("scripts/restart.mjs", "utf8")
+			.split("\nlet child;")[0]
+			.replace(/^import .*;\n/gm, "") + "\nglobalThis.selectedPath = env.PATH;";
+	const native = "/Applications/Tailscale.app/Contents/MacOS";
+	const shim =
+		'#!/bin/sh\n/Applications/Tailscale.app/Contents/MacOS/tailscale "$@"\n';
+	for (const [platform, path, files, expected] of [
+		[
+			"darwin",
+			"/usr/local/bin:/usr/bin:/bin",
+			{ "/usr/local/bin/tailscale": shim, [native + "/tailscale"]: "" },
+			native + ":/usr/local/bin:/usr/bin:/bin",
+		],
+		[
+			"darwin",
+			"/usr/bin:/bin",
+			{ [native + "/tailscale"]: "" },
+			native + ":/usr/bin:/bin",
+		],
+		["darwin", "/usr/bin:/bin", {}, "/usr/bin:/bin"],
+		["darwin", "/fixture", { [native + "/tailscale"]: "" }, "/fixture"],
+		[
+			"darwin",
+			"/fixture:/usr/bin",
+			{ "/fixture/tailscale": "fixture", [native + "/tailscale"]: "" },
+			"/fixture:/usr/bin",
+		],
+		[
+			"darwin",
+			"/usr/local/bin:/bin",
+			{ "/usr/local/bin/tailscale": "native", [native + "/tailscale"]: "" },
+			"/usr/local/bin:/bin",
+		],
+		[
+			"linux",
+			"/usr/bin:/bin",
+			{ [native + "/tailscale"]: "" },
+			"/usr/bin:/bin",
+		],
+	] as const) {
+		const sandbox = {
+			process: { platform, env: { PATH: path } },
+			delimiter: ":",
+			join,
+			fileURLToPath: () => "/repo/",
+			URL,
+			constants: { X_OK: 1 },
+			accessSync: (name: string) => {
+				if (!(name in files)) throw new Error("missing");
+			},
+			readFileSync: (name: string) => (files as Record<string, string>)[name],
+			selectedPath: "",
+		};
+		runInNewContext(
+			source.replace("import.meta.url", '"file:///repo/scripts/restart.mjs"'),
+			sandbox,
+		);
+		expect(sandbox.selectedPath).toBe(expected);
+	}
+});

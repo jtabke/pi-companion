@@ -46,13 +46,43 @@ export function context(
 
 // Public event-bus semantics: handler bodies run synchronously; returned promises are not awaited.
 export function questionBus() {
- const handlers = new Map<string, Set<(data: unknown) => void>>();
- return {
-  handlers,
-  emit(channel: string, data: unknown) { for (const handler of [...(handlers.get(channel) ?? [])]) handler(data); },
-  on(channel: string, handler: (data: unknown) => void) { let set = handlers.get(channel); if (!set) handlers.set(channel, set = new Set()); set.add(handler); return () => { set!.delete(handler); }; },
- };
+	const handlers = new Map<string, Set<(data: unknown) => void>>();
+	return {
+		handlers,
+		emit(channel: string, data: unknown) {
+			for (const handler of [...(handlers.get(channel) ?? [])]) handler(data);
+		},
+		on(channel: string, handler: (data: unknown) => void) {
+			let set = handlers.get(channel);
+			if (!set) handlers.set(channel, (set = new Set()));
+			set.add(handler);
+			return () => {
+				set!.delete(handler);
+			};
+		},
+	};
 }
-export function questionRequest(invocationId = 'controlled-live-invocation') {
- return { invocationId, questions: [{ question: 'Which surface?', header: 'Surface', multiSelect: false, options: [{ label: 'Terminal', description: 'Terminal description', preview: 'Terminal preview' }, { label: 'Browser', description: 'Browser description', preview: 'Browser preview' }] }] };
+export function questionRequest(invocationId = "controlled-live-invocation") {
+	return {
+		invocationId,
+		questions: [
+			{
+				question: "Which surface?",
+				header: "Surface",
+				multiSelect: false,
+				options: [
+					{
+						label: "Terminal",
+						description: "Terminal description",
+						preview: "Terminal preview",
+					},
+					{
+						label: "Browser",
+						description: "Browser description",
+						preview: "Browser preview",
+					},
+				],
+			},
+		],
+	};
 }

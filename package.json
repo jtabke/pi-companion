@@ -3,15 +3,26 @@
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
+	"pi": {
+		"extensions": [
+			"./dist/extension/bridge.js"
+		]
+	},
 	"engines": {
 		"node": ">=24"
 	},
 	"scripts": {
+		"setup:types": "python3 -B scripts/link-pi-declarations.py",
 		"typecheck": "tsc --noEmit",
+		"analyze": "fallow",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
 		"build": "tsc -p tsconfig.node.json && vite build",
 		"start": "node dist/gateway/cli.js",
-		"test": "vitest run",
-		"test:browser": "PLAYWRIGHT_BROWSERS_PATH=.cache/playwright playwright test",
+		"restart": "node scripts/restart.mjs",
+		"test": "npm run build && vitest run",
+		"test:browser": "npm run build && PLAYWRIGHT_BROWSERS_PATH=.cache/playwright playwright test",
+		"check": "npm run typecheck && npm test && npm run test:browser",
 		"test:pi": "python3 -B tests/real-pi.py"
 	},
 	"dependencies": {
@@ -35,6 +46,8 @@
 		"@types/react": "19.3.0",
 		"@types/react-dom": "19.3.0",
 		"@vitejs/plugin-react": "6.1.1",
+		"fallow": "3.30.0",
+		"prettier": "3.9.9",
 		"typescript": "5.9.3",
 		"vite": "8.3.1",
 		"vitest": "4.1.11"

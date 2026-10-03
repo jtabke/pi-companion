@@ -66,7 +66,7 @@ def main():
         (root / 'ipc').mkdir(mode=0o700)
         base_env = {'PATH': os.defpath + os.pathsep + str(Path(executable).parent) + os.pathsep + str(Path(node).parent),
                     'TERM': 'xterm-256color', 'LANG': 'en_US.UTF-8', 'PI_OFFLINE': '1', 'PI_SKIP_VERSION_CHECK': '1',
-                    'PI_TELEMETRY': '0', 'PI_IMAGE_PROTOCOL': 'none', 'C2_RUNTIME': str(root / 'ipc'), 'C2_PORT': '4394',
+                    'PI_TELEMETRY': '0', 'PI_IMAGE_PROTOCOL': 'none', 'C2_RUNTIME': str(root / 'ipc'), 'C2_AUTH_DIR': str(root / 'auth'), 'C2_PORT': '4394',
                     'PLAYWRIGHT_BROWSERS_PATH': str(REPO / '.cache/playwright')}
         for name in (('a',) if input_mode else ('a', 'b')):
             directory = root / name
@@ -96,14 +96,15 @@ def main():
                         if error.errno != errno.EIO:
                             raise
 
-        def browser(mode, secret=None, trigger=None):
+        def browser(mode, cookie=None, trigger=None):
             target = owners[0]['root'] if mode == 'capture' else root
             marker = root / 'browser-ready'
             marker.unlink(missing_ok=True)
-            env = {**owners[0]['env'], **({'C2_TEST_SECRET': secret} if secret else {})}
+            env = {**owners[0]['env'], **({'C2_TEST_COOKIE': cookie} if cookie else {})}
             script = 'tests/input-browser.mjs' if mode.startswith('input-') else 'tests/real-browser.mjs'
             mode = mode.removeprefix('input-')
             child = subprocess.Popen([node, str(REPO / script), mode, str(target)], cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+            env.pop('C2_TEST_COOKIE', None)
             try:
                 deadline = time.monotonic() + 90
                 while time.monotonic() < deadline:
@@ -197,8 +198,15 @@ def main():
                     if select.select([child.stdout], [], [], 0.05)[0]:
                         output += os.read(child.stdout.fileno(), 1024)
                         assert len(output) < 4096
-                        if b'Pairing secret (submit in browser): ' in output:
-                            return child, output.decode().split('browser): ')[1].strip()
+                        if b'Pairing code (submit in browser): ' in output and b'\nExpires: ' in output:
+                            code = output.decode().split('browser): ')[1].splitlines()[0]
+                            output = b''
+                            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                            request = urllib.request.Request('http://127.0.0.1:4394/api/pair', data=json.dumps({'code': code, 'remember': False}).encode(), headers={'Content-Type': 'application/json', 'Origin': 'http://127.0.0.1:4394', 'X-C2-CSRF': 'pair'})
+                            with opener.open(request) as auth:
+                                cookie = auth.headers['Set-Cookie'].split(';')[0]
+                            code = None
+                            return child, cookie
                     if child.poll() is not None:
                         raise RuntimeError('Gateway exited')
                 raise TimeoutError('Gateway ready')
@@ -320,11 +328,8 @@ def main():
             wait(owner, lambda records: any(r['type'] == 'held_response' for r in records), child=True)
             runner = status('held-before-browser')
             terminal(owner, 'terminal-before')
-            gateway, secret = launch_gateway()
+            gateway, cookie = launch_gateway()
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            request = urllib.request.Request('http://127.0.0.1:4394/api/pair', data=json.dumps({'secret': secret}).encode(), headers={'Content-Type': 'application/json', 'Origin': 'http://127.0.0.1:4394', 'X-C2-CSRF': 'pair'})
-            with opener.open(request) as auth:
-                cookie = auth.headers['Set-Cookie'].split(';')[0]
             def summaries():
                 with opener.open(urllib.request.Request('http://127.0.0.1:4394/api/snapshot', headers={'Cookie': cookie})) as response:
                     return json.load(response)['sessions']
@@ -341,11 +346,11 @@ def main():
             identities = {'a': {k: initial[0][k] for k in ('instance', 'generation')}, 'b': {k: next(s for s in both if s['instance'] != initial[0]['instance'])[k] for k in ('instance', 'generation')}}
             (root / 'background-owners.json').write_text(json.dumps(identities))
             stage = 'actual browser A B A and selected disconnect while held'
-            first = browser('background-switch', secret)
+            first = browser('background-switch', cookie)
             status('browser-switch-and-close')
             stage = 'actual production gateway CLI death and new pairing lock acquisition'
             lock = root / 'ipc/gateway.lock'
-            inode, old_pid, old_secret = lock.stat().st_ino, gateway.pid, secret
+            inode, old_pid, old_cookie = lock.stat().st_ino, gateway.pid, cookie
             gateway.kill()  # Actual CLI crash: kernel must release the descriptor-held flock.
             gateway.wait(timeout=10)
             assert gateway.returncode == -signal.SIGKILL and lock.stat().st_ino == inode
@@ -353,9 +358,9 @@ def main():
             status('gateway-process-dead')
             for o in owners:
                 terminal(o, 'terminal-after')
-            gateway, secret = launch_gateway()
-            assert gateway.pid != old_pid and secret != old_secret and lock.stat().st_ino == inode
-            recovered = browser('background-recover', secret)
+            gateway, cookie = launch_gateway()
+            assert gateway.pid != old_pid and cookie != old_cookie and lock.stat().st_ino == inode
+            recovered = browser('background-recover', cookie)
             status('new-cli-new-pairing-recovered-same-owner')
             stage = 'release genuine child provider only after recovery same ID completion'
             (owner['root'] / 'release-child').write_text('release')
@@ -399,7 +404,7 @@ def main():
             result = {'verdict': 'completed', 'slice': 'C4-E', 'piVersion': '0.99.2', 'subagentsVersion': '0.73.1', 'entryPoint': '/run c4-disposable <owned-tag>:native-read --bg', 'realTerminalOwners': 2,
                       'nativeChildren': 1, 'scriptedResponses': 3, 'childResponses': 2, 'nativeReads': 1, 'parentRequestsBeforeCompletion': 0, 'parentAcknowledgementResponses': 1, 'parentReads': 0, 'idleOwnerRequestsAndReads': 0,
                       'lifecycle': lifecycle, 'browserEvidence': [first, recovered], 'gatewayCliKilledExit': -signal.SIGKILL,
-                      'newCliPidAndPairingSecret': True, 'flockInodePreservedAndReacquired': True,
+                      'newCliPidAndTemporaryCookie': True, 'flockInodePreservedAndReacquired': True,
                       'processTerminalObserved': True, 'terminalBeforeHeldAfterRecoveryAndCompletion': True,
                       'childBranch': settled['branch'], 'piExits': [0, 0], 'ownerOnlyRuntime': True}
             for path in [root, *root.rglob('*')]:
@@ -413,8 +418,8 @@ def main():
             wait(owner, lambda records: any(r['type'] == 'ready' for r in records))
             send(owner, owner['tag'] + ':terminal-before')
             wait(owner, lambda records: any(r.get('label') == 'terminal-before' for r in records))
-            gateway, secret = launch_gateway()
-            first = browser('input-send', secret)
+            gateway, cookie = launch_gateway()
+            first = browser('input-send', cookie)
             settled = next(r for r in evidence(owner) if r['type'] == 'settled')
             assert settled['branch']['sha256'] == screenshot['sha256'] and settled['branch']['userCount'] == 1
             assert (owner['tag'] + ':native-read').encode() in owner['terminal'] and (b'C4 held response.' if stop_mode else b'C4 fixed final response.') in owner['terminal'] and b'fixture.png' in owner['terminal']  # Owning TUI rendered the native turn/tool, not only the before tag.
@@ -425,8 +430,8 @@ def main():
             send(owner, owner['tag'] + ':terminal-after')
             wait(owner, lambda records: any(r.get('label') == 'terminal-after' for r in records))
             stage = 'gateway restart deliberate pairing claim native dedup'
-            gateway, secret = launch_gateway()
-            recovered = browser('input-recover', secret)
+            gateway, cookie = launch_gateway()
+            recovered = browser('input-recover', cookie)
             gateway.send_signal(signal.SIGTERM)
             gateway.wait(timeout=10)
             assert gateway.returncode == 0 and owner['process'].poll() is None
@@ -457,11 +462,8 @@ def main():
             stage = 'owner A before gateway native read'
             launch_owner(owners[0])
             read(owners[0])
-            gateway, secret = launch_gateway()
+            gateway, cookie = launch_gateway()
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            request = urllib.request.Request('http://127.0.0.1:4394/api/pair', data=json.dumps({'secret': secret}).encode(), headers={'Content-Type': 'application/json', 'Origin': 'http://127.0.0.1:4394', 'X-C2-CSRF': 'pair'})
-            with opener.open(request) as auth:
-                cookie = auth.headers['Set-Cookie'].split(';')[0]
             with opener.open(urllib.request.Request('http://127.0.0.1:4394/api/snapshot', headers={'Cookie': cookie})) as response:
                 initial = json.load(response)
             assert len(initial['sessions']) == 1 and 'snapshot' not in initial
@@ -469,7 +471,7 @@ def main():
             launch_owner(owners[1])
             read(owners[1])
             stage = 'two native browsers selection inline enlarged independent tabs'
-            first = browser('assert', secret)
+            first = browser('assert', cookie)
             assert len(first) == 4 and all(item['noDuplicates'] for item in first)
             gateway.send_signal(signal.SIGTERM)
             gateway.wait(timeout=10)
@@ -479,20 +481,20 @@ def main():
                 send(owner, owner['tag'] + ':terminal-after')
                 wait(owner, lambda records: any(r.get('label') == 'terminal-after' for r in records))
             stage = 'gateway restart both native recovery'
-            gateway, secret = launch_gateway()
-            recovered = browser('assert', secret)
+            gateway, cookie = launch_gateway()
+            recovered = browser('assert', cookie)
             assert first == recovered
             stage = 'actual native reload selected A while B unaffected'
-            reload_evidence = browser('reload', secret, lambda: send(owners[0], '/reload'))
+            reload_evidence = browser('reload', cookie, lambda: send(owners[0], '/reload'))
             assert reload_evidence[0]['instance'] == first[0]['instance'] and reload_evidence[0]['generation'] != first[0]['generation']
-            after_reload = browser('assert', secret)
+            after_reload = browser('assert', cookie)
             assert all(a['instance'] == b['instance'] and a['sha256'] == b['sha256'] and a['entry'] == b['entry'] and (a['generation'] != b['generation'] if a['owner'] == 'a' else a['generation'] == b['generation']) for a, b in zip(first, after_reload))
             for owner in owners:
                 before = len([r for r in evidence(owner) if r.get('label') == 'terminal-after'])
                 send(owner, owner['tag'] + ':terminal-after')
                 wait(owner, lambda records: len([r for r in records if r.get('label') == 'terminal-after']) > before)
             stage = 'selected B native shutdown keeps A live and cached B disconnected'
-            disconnected = browser('disconnect', secret, lambda: send(owners[1], '/c1m-finish'))
+            disconnected = browser('disconnect', cookie, lambda: send(owners[1], '/c1m-finish'))
             owners[1]['process'].wait(timeout=5)
             assert owners[1]['process'].returncode == 0 and owners[0]['process'].poll() is None
             gateway.send_signal(signal.SIGTERM)

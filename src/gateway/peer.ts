@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { Value } from "@sinclair/typebox/value";
 import { ownerRead, ownerStat } from "../shared/runtime.js";
 import {
-	QuestionsSchema, questionLimits, QuestionReceiptSchema, type Questions, type PrivateQuestionReply, type QuestionReceipt,
+	QuestionsSchema,
+	questionLimits,
+	QuestionReceiptSchema,
+	type Questions,
+	type PrivateQuestionReply,
+	type QuestionReceipt,
 	RegistrationSchema,
 	SnapshotSchema,
 	StatusSchema,
@@ -17,6 +22,7 @@ import {
 	type TextRequest,
 	type ImageRequest,
 	type StopRequest,
+	type RenameRequest,
 } from "../shared/protocol.js";
 export function peerResponse(
 	runtime: string,
@@ -53,13 +59,20 @@ async function readJson(
 		res.destroy();
 		throw new Error("Bridge unavailable");
 	}
+	return readResponseJson(res, max, "Bridge response limit");
+}
+async function readResponseJson(
+	res: IncomingMessage,
+	max: number,
+	limitError: string,
+): Promise<unknown> {
 	let total = 0;
 	const chunks: Buffer[] = [];
 	for await (const chunk of res) {
 		total += chunk.length;
 		if (total > max) {
 			res.destroy();
-			throw new Error("Bridge response limit");
+			throw new Error(limitError);
 		}
 		chunks.push(chunk);
 	}
@@ -82,7 +95,7 @@ export async function readStatus(
 	runtime: string,
 	peer: Registration,
 ): Promise<Status> {
-	const data = await readJson(runtime, peer, "/status", 8192);
+	const data = await readJson(runtime, peer, "/status", limits.statusBytes);
 	if (
 		!Value.Check(StatusSchema, data) ||
 		data.summary.instance !== peer.instance ||
@@ -119,10 +132,25 @@ export async function discover(runtime: string) {
 }
 
 // Only fixed input/Stop POSTs are permitted. A transport failure is uncertain at the gateway.
-export function sendStop(runtime: string, peer: Registration, body: StopRequest) {
+export function sendRename(
+	runtime: string,
+	peer: Registration,
+	body: RenameRequest,
+) {
 	return sendInput(runtime, peer, body);
 }
-export function sendImage(runtime: string, peer: Registration, body: ImageRequest) {
+export function sendStop(
+	runtime: string,
+	peer: Registration,
+	body: StopRequest,
+) {
+	return sendInput(runtime, peer, body);
+}
+export function sendImage(
+	runtime: string,
+	peer: Registration,
+	body: ImageRequest,
+) {
 	return sendInput(runtime, peer, body);
 }
 export async function sendText(
@@ -132,7 +160,11 @@ export async function sendText(
 ): Promise<Receipt> {
 	return sendInput(runtime, peer, body);
 }
-async function sendInput(runtime: string, peer: Registration, body: TextRequest | ImageRequest | StopRequest): Promise<Receipt> {
+async function sendInput(
+	runtime: string,
+	peer: Registration,
+	body: TextRequest | ImageRequest | StopRequest | RenameRequest,
+): Promise<Receipt> {
 	ownerStat(runtime, "directory");
 	const socketPath = join(runtime, `b-${peer.generation}.sock`);
 	ownerStat(socketPath, "socket");
@@ -140,7 +172,14 @@ async function sendInput(runtime: string, peer: Registration, body: TextRequest 
 		const req = request(
 			{
 				socketPath,
-				path: !("text" in body) ? "/stop" : "image" in body ? "/image" : "/text",
+				path:
+					"name" in body
+						? "/rename"
+						: !("text" in body)
+							? "/stop"
+							: "images" in body
+								? "/image"
+								: "/text",
 				method: "POST",
 				agent: false,
 				headers: {
@@ -154,17 +193,7 @@ async function sendInput(runtime: string, peer: Registration, body: TextRequest 
 		req.setTimeout(2500, () => req.destroy(new Error("Bridge timed out")));
 		req.end(JSON.stringify(body));
 	});
-	let bytes = 0;
-	const chunks: Buffer[] = [];
-	for await (const chunk of res) {
-		bytes += chunk.length;
-		if (bytes > 1024) {
-			res.destroy();
-			throw new Error("Receipt limit");
-		}
-		chunks.push(chunk);
-	}
-	const receipt: unknown = JSON.parse(Buffer.concat(chunks).toString());
+	const receipt = await readResponseJson(res, 1024, "Receipt limit");
 	if (
 		res.statusCode !== 200 ||
 		!Value.Check(ReceiptSchema, receipt) ||
@@ -174,20 +203,68 @@ async function sendInput(runtime: string, peer: Registration, body: TextRequest 
 	return receipt;
 }
 
-export async function readQuestions(runtime: string, peer: Registration): Promise<Questions> {
- const data = await readJson(runtime, peer, '/questions', questionLimits.stateBytes);
- if (!Value.Check(QuestionsSchema, data) || data.instance !== peer.instance || data.generation !== peer.generation || data.pending.some(p => Buffer.byteLength(JSON.stringify(p)) > questionLimits.requestBytes) || Buffer.byteLength(JSON.stringify(data.pending)) > questionLimits.totalBytes + 16) throw new Error('Invalid question state');
- return data;
+export async function readQuestions(
+	runtime: string,
+	peer: Registration,
+): Promise<Questions> {
+	const data = await readJson(
+		runtime,
+		peer,
+		"/questions",
+		questionLimits.stateBytes,
+	);
+	if (
+		!Value.Check(QuestionsSchema, data) ||
+		data.instance !== peer.instance ||
+		data.generation !== peer.generation ||
+		data.pending.some(
+			(p) => Buffer.byteLength(JSON.stringify(p)) > questionLimits.requestBytes,
+		) ||
+		Buffer.byteLength(JSON.stringify(data.pending)) >
+			questionLimits.totalBytes + 16
+	)
+		throw new Error("Invalid question state");
+	return data;
 }
-export async function sendQuestionReply(runtime: string, peer: Registration, body: PrivateQuestionReply, signal: AbortSignal): Promise<QuestionReceipt> {
- ownerStat(runtime, 'directory'); const socketPath = join(runtime, `b-${peer.generation}.sock`); ownerStat(socketPath, 'socket');
- const res = await new Promise<IncomingMessage>((resolve, reject) => {
-  const req = request({ socketPath, path: '/question-reply', method: 'POST', agent: false, signal, headers: { 'x-c2-capability': peer.capability, 'content-type': 'application/json' } }, resolve);
-  req.on('error', reject); req.setTimeout(2500, () => req.destroy(new Error('Bridge timed out'))); req.end(JSON.stringify(body));
- });
- let bytes = 0; const chunks: Buffer[] = [];
- for await (const chunk of res) { bytes += chunk.length; if (bytes > questionLimits.bodyBytes) { res.destroy(); throw new Error('Question receipt limit'); } chunks.push(chunk); }
- const receipt: unknown = JSON.parse(Buffer.concat(chunks).toString());
- if (res.statusCode !== 200 || !Value.Check(QuestionReceiptSchema, receipt) || receipt.invocationId !== body.reply.invocationId || receipt.replyId !== body.reply.replyId) throw new Error('Invalid question receipt');
- return receipt;
+export async function sendQuestionReply(
+	runtime: string,
+	peer: Registration,
+	body: PrivateQuestionReply,
+	signal: AbortSignal,
+): Promise<QuestionReceipt> {
+	ownerStat(runtime, "directory");
+	const socketPath = join(runtime, `b-${peer.generation}.sock`);
+	ownerStat(socketPath, "socket");
+	const res = await new Promise<IncomingMessage>((resolve, reject) => {
+		const req = request(
+			{
+				socketPath,
+				path: "/question-reply",
+				method: "POST",
+				agent: false,
+				signal,
+				headers: {
+					"x-c2-capability": peer.capability,
+					"content-type": "application/json",
+				},
+			},
+			resolve,
+		);
+		req.on("error", reject);
+		req.setTimeout(2500, () => req.destroy(new Error("Bridge timed out")));
+		req.end(JSON.stringify(body));
+	});
+	const receipt = await readResponseJson(
+		res,
+		questionLimits.bodyBytes,
+		"Question receipt limit",
+	);
+	if (
+		res.statusCode !== 200 ||
+		!Value.Check(QuestionReceiptSchema, receipt) ||
+		receipt.invocationId !== body.reply.invocationId ||
+		receipt.replyId !== body.reply.replyId
+	)
+		throw new Error("Invalid question receipt");
+	return receipt;
 }

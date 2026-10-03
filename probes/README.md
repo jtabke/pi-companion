@@ -42,10 +42,10 @@ External delivery uses a one-shot temporary file trigger and public
 returns `handled` before model processing. It proves delivery/interception only;
 it does not prove normal acceptance, persistence, or busy message queue semantics.
 
-Evidence and source-only conclusions: [capability report](../docs/capability-probe.md).
-The original investigation ran on 0.99.1; the cleanup follow-up reviewed the same
-used public seams and ran on 0.99.2. This exact version allowlist is not a general
-product compatibility range. Questionnaire remains guarded at exactly 2.11.0.
+The probe permits Pi 0.99.1 and 0.99.2; Companion itself is checked only on 0.99.2.
+This allowlist is not a general product compatibility range. Questionnaire remains
+guarded at exactly 2.11.0. Browser questionnaires need the separate default-off
+[source integration](../integrations/README.md); this probe does not install it.
 
 Focused interrupt regression:
 
@@ -108,7 +108,34 @@ umask checks run before backup cleanup. This is not a Pi abort/cancellation test
 The check itself exits 0 when both cases pass. Each owner has a 45-second deadline
 plus bounded shutdown/cleanup waits. No unrelated probe suites are required.
 
-See [native-media evidence](../docs/native-media-probe.md) for the fixture hash,
-checked output, public references, maintenance obligations, and limits. This does
-not prove browser rendering/security, larger-image/provider limits, real screenshot
-capture, iPhone support, or C2 completion.
+This does not prove browser rendering/security, larger-image/provider limits, real
+screenshot capture or iPhone support. See [Companion's current limits](../README.md#limitations).
+
+## Browser/native input fixture
+
+`npm run test:pi` runs `tests/real-pi.py` with a temporary source wrapper and the fixed
+local provider above. Its default path exercises native images, two owners and browser
+recovery. `npm run test:pi -- --input`, `--image`, `--stop` or `--background` select
+separate fixture paths (pass one mode only). Pi must be exactly 0.99.2; background mode
+also requires the existing installed pi-subagents 0.73.1. These runners use isolated
+HOME/session/runtime directories, not personal sessions. Check their version guards
+before running; do not substitute a paid/network provider.
+
+## Source questionnaire fixture
+
+After intentionally restoring the [source integration](../integrations/README.md),
+these separate no-model TUI checks require Pi 0.99.2 and questionnaire source 2.11.0:
+
+```sh
+python3 -B probes/run-questionnaire-replies.py
+python3 -B probes/run-questionnaire-replies.py --default-off
+python3 -B probes/run-questionnaire-replies.py --companion
+```
+
+Default mode checks the source reply seam; `--default-off` checks unconfigured
+terminal-only behavior. `--companion` checks the production bridge/gateway/browser and
+requires built Companion output and the local Chromium engine. It cannot be combined
+with `--default-off`. No global install/settings change is included.
+
+All native probes are separate from `npm run check`. Fixture success does not prove
+model consumption, actual-phone behavior or compatibility with a newer Pi version.
