@@ -7017,3 +7017,235 @@ for (const width of [320, 390])
 		await draft.fill("Short again");
 		expect((await draft.boundingBox())!.height).toBe(44);
 	});
+
+for (const width of [320, 390]) {
+	test(`native tool summaries, diffs, progress and answer copy at ${width}px`, async ({
+		page,
+	}, testInfo) => {
+		await page.setViewportSize({ width, height: 844 });
+		const identity = { instance: "a".repeat(32), generation: "b".repeat(32) };
+		const summary = {
+			...identity,
+			project: "Review",
+			session: "Native tools",
+			parent: "working" as const,
+			background: "unobserved" as const,
+		};
+		const snapshot: Snapshot = {
+			...summary,
+			truncated: false,
+			model: "fixture/model",
+			context: { tokens: 51_200, window: 128_000 },
+			items: [
+				{
+					id: "answer",
+					role: "assistant",
+					blocks: [
+						{ type: "text", text: "Review **these changes**." },
+						{ type: "thinking", text: "Do not copy reasoning" },
+						{ type: "text", text: "Keep the original spacing.  " },
+					],
+				},
+				{
+					id: "edit",
+					role: "tool: edit",
+					tool: {
+						name: "edit",
+						summary: "src/a-very-long-directory/".repeat(8) + "main.ts",
+						state: "completed",
+					},
+					blocks: [
+						{ type: "text", text: "Updated main.ts" },
+						{
+							type: "diff",
+							text: '-1 const old = "<script>";\n+1 const next = "&safe";',
+						},
+					],
+				},
+				{
+					id: "failure",
+					role: "tool: bash",
+					tool: { name: "bash", summary: "npm test", state: "error" },
+					blocks: [
+						{ type: "text", text: "Tests failed: expected 2, received 1" },
+					],
+				},
+				{
+					id: "active",
+					role: "tool: read",
+					tool: { name: "read", summary: "src/main.ts", state: "running" },
+					blocks: [],
+				},
+			],
+		};
+		await page.route("**/api/snapshot*", (route) =>
+			route.fulfill({
+				json: {
+					connection: "connected",
+					sessions: [summary],
+					selected: identity,
+					snapshot,
+				},
+			}),
+		);
+		await page.addInitScript(
+			({ identity, summary, snapshot }) => {
+				const sources = new Set<Source>();
+				class Source extends EventTarget {
+					constructor() {
+						super();
+						sources.add(this);
+						queueMicrotask(() => this.emit());
+					}
+					close() {
+						sources.delete(this);
+					}
+					emit() {
+						this.dispatchEvent(
+							new MessageEvent("snapshot", {
+								data: JSON.stringify({
+									connection: "connected",
+									sessions: [summary],
+									selected: identity,
+									snapshot,
+								}),
+							}),
+						);
+					}
+				}
+				Object.defineProperty(window, "EventSource", { value: Source });
+				Object.defineProperty(navigator, "clipboard", {
+					configurable: true,
+					value: {
+						writeText: async (text: string) => {
+							Object.defineProperty(window, "copiedAnswer", {
+								configurable: true,
+								value: text,
+							});
+						},
+					},
+				});
+				Object.defineProperty(window, "finishTool", {
+					value: () => {
+						const item = snapshot.items.find((item) => item.id === "active")!;
+						item.tool!.state = "completed";
+						item.blocks = [{ type: "text", text: "Native read completed" }];
+						snapshot.context!.tokens = null;
+						for (const source of sources) source.emit();
+					},
+				});
+			},
+			{ identity, summary, snapshot },
+		);
+		const posts: string[] = [];
+		page.on("request", (request) => {
+			if (request.method() === "POST") posts.push(request.url());
+		});
+		await page.goto(`/#session=${identity.instance}:${identity.generation}`);
+		const answer = page.locator('[data-native-item="answer"]');
+		const copy = answer.getByRole("button", {
+			name: "Copy answer",
+			exact: true,
+		});
+		await expect(copy).toHaveText("");
+		await expect(copy.locator('svg[aria-hidden="true"]')).toHaveCount(1);
+		await copy.scrollIntoViewIfNeeded();
+		expect((await copy.boundingBox())!.width).toBeGreaterThanOrEqual(44);
+		await copy.focus();
+		await page.keyboard.press("Enter");
+		await expect(answer.getByRole("status")).toHaveText("Copied");
+		expect(
+			await page.evaluate(
+				() => (window as unknown as { copiedAnswer: string }).copiedAnswer,
+			),
+		).toBe("Review **these changes**.\n\nKeep the original spacing.  ");
+		expect((await copy.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+		expect(
+			await copy.evaluate((node) => getComputedStyle(node).outlineStyle),
+		).not.toBe("none");
+		await page.evaluate(() =>
+			Object.defineProperty(navigator, "clipboard", {
+				configurable: true,
+				value: {
+					writeText: async () => {
+						throw Error("Denied");
+					},
+				},
+			}),
+		);
+		await copy.click();
+		await expect(answer.getByRole("status")).toHaveText(
+			"Copy failed — select answer to copy.",
+		);
+		const edit = page.locator('[data-native-item="edit"]');
+		await expect(edit.locator("summary")).toContainText("Edit");
+		await expect(edit.locator(".tool-summary")).toHaveAttribute(
+			"title",
+			snapshot.items[1].tool!.summary,
+		);
+		await edit.locator("summary").focus();
+		await page.keyboard.press("Enter");
+		await expect(edit.locator(".diff-added")).toHaveText(
+			'+1 const next = "&safe";',
+		);
+		await expect(edit.locator(".diff-deleted")).toHaveText(
+			'-1 const old = "<script>";',
+		);
+		await expect(edit.locator("script")).toHaveCount(0);
+		await expect(
+			page.locator('[data-native-item="failure"] .tool-error-preview'),
+		).toHaveText("Tests failed: expected 2, received 1");
+		await expect(edit.locator(".tool-detail-summary")).toHaveText(
+			snapshot.items[1].tool!.summary,
+		);
+		await edit.locator(".tool-detail-summary").focus();
+		expect(
+			await edit
+				.locator(".tool-detail-summary")
+				.evaluate((node) => getComputedStyle(node).outlineStyle),
+		).not.toBe("none");
+		await expect(page.locator(".conversation-metadata")).toHaveText(
+			"fixture/modelContext ~40% · 128,000 token limit",
+		);
+		const active = page.locator('[data-native-item="active"]');
+		await expect(active.locator(".tool-state")).toHaveText("Running");
+		await page.evaluate(() =>
+			(window as unknown as { finishTool: () => void }).finishTool(),
+		);
+		await expect(active.locator(".tool-state")).toHaveText("Done");
+		await expect(page.locator(".conversation-metadata")).toHaveText(
+			"fixture/modelContext unknown · 128,000 token limit",
+		);
+		await active.locator("summary").click();
+		await expect(active.locator(".tool-output")).toHaveText(
+			"Native read completed",
+		);
+		for (const colorScheme of ["light", "dark"] as const) {
+			await page.emulateMedia({ colorScheme });
+			await page.evaluate(() => {
+				document.documentElement.style.fontSize = "125%";
+			});
+			await edit.locator("summary").scrollIntoViewIfNeeded();
+			expect(
+				await page.evaluate(
+					() => document.documentElement.scrollWidth <= innerWidth,
+				),
+			).toBe(true);
+			const heading = await edit.locator("summary").boundingBox();
+			expect(heading!.x).toBeGreaterThanOrEqual(0);
+			expect(heading!.x + heading!.width).toBeLessThanOrEqual(width);
+			expect(heading!.height).toBeGreaterThanOrEqual(44);
+			const added = await edit
+				.locator(".diff-added")
+				.evaluate((node) => getComputedStyle(node).backgroundColor);
+			const deleted = await edit
+				.locator(".diff-deleted")
+				.evaluate((node) => getComputedStyle(node).backgroundColor);
+			expect(added).not.toBe(deleted);
+			await page.screenshot({
+				path: testInfo.outputPath(`native-tools-${width}-${colorScheme}.png`),
+			});
+		}
+		expect(posts).toEqual([]);
+	});
+}

@@ -912,6 +912,71 @@ pre:focus-visible,
 }
 .tool-label {
 	overflow-wrap: anywhere;
+	flex-shrink: 0;
+}
+.tool-summary {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 0.8125rem;
+	font-weight: 400;
+	color: var(--muted);
+}
+.tool-state {
+	flex-shrink: 0;
+	font-size: 0.75rem;
+	color: var(--muted);
+}
+.tool-state-error,
+.tool-error-preview {
+	color: light-dark(#a62724, #ffaaa5);
+}
+.tool-error-preview {
+	margin: 4px 10px 8px;
+	white-space: pre-wrap;
+}
+.tool-detail-summary {
+	margin: 4px 10px;
+	max-height: 120px;
+	overflow: auto;
+	white-space: pre-wrap;
+	font-family: monospace;
+	font-size: 0.8125rem;
+}
+.conversation-metadata {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	font-size: 0.75rem;
+	color: var(--muted);
+}
+.answer-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	font-size: 0.8125rem;
+	color: var(--muted);
+}
+.answer-actions button {
+	display: grid;
+	place-items: center;
+	width: 44px;
+	height: 44px;
+	border: 0;
+	padding: 0;
+}
+.edit-diff code {
+	display: grid;
+	min-width: max-content;
+}
+.diff-added {
+	background: light-dark(#e2f4e6, #173c26);
+}
+.diff-deleted {
+	background: light-dark(#fbe4e4, #492323);
 }
 .tool-icon,
 .tool-chevron {
@@ -928,6 +993,10 @@ pre:focus-visible,
 }
 .tool-disclosure summary:focus-visible {
 	outline-offset: -3px;
+}
+.tool-detail-summary:focus-visible {
+	outline: 2px solid var(--muted);
+	outline-offset: 2px;
 }
 .tool-disclosure > .tool-output,
 .tool-disclosure > .preview-note,

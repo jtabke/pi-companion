@@ -58,6 +58,17 @@ Pi headings while retaining accessible identity. Native Thinking stays collapsed
 opened and retains that choice while the same item updates. Observed active work uses
 three subtle dots with an accessible activity label; reduced-motion mode shows static dots.
 Consecutive tool results share compact icon-labelled stacks; each output expands independently.
+Recognized native tools show their file path or shell command, with the full bounded summary
+available inside the disclosure. Native execution events show Running; finalized results show
+Done or Failed, with a short failure preview visible without expanding. Nested calls appear
+only while observed running; their output remains owned by the parent tool. Progress is sampled
+on existing gateway refreshes, so short calls may finish between observations.
+Successful native edits expose their structured diff with distinct added/deleted backgrounds;
+result text stays available. No syntax-highlighting dependency is added.
+Copy answer copies the displayed answer's Markdown text, not reasoning or tool output;
+shortened answers remain previews, not the full native history. Code copying stays separate.
+A read-only line at the bottom shows the native model and estimated context usage when
+available. Unknown context stays unknown; no child-inclusive cost total is inferred.
 Markdown tables keep readable natural column widths in a separate horizontal scroll area,
 with Left/Right-arrow controls when that area is focused. They do not widen the page.
 

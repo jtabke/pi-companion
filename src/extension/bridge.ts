@@ -6,11 +6,14 @@ import { Readable } from "node:stream";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
+	ToolExecutionStartEvent,
+	ToolExecutionEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import { runtimeDirectory, ownerStat } from "../shared/runtime.js";
-import { nativeSnapshot, nativeStatus } from "./snapshot.js";
+import { nativeSnapshot, nativeStatus, toolSummary } from "./snapshot.js";
 import {
 	type Registration,
+	type ToolObservation,
 	TextRequestSchema,
 	ImageRequestSchema,
 	StopRequestSchema,
@@ -37,6 +40,8 @@ export function createBridge(
 	setSessionName?: ExtensionAPI["setSessionName"],
 ) {
 	let activeGeneration: string | undefined;
+	let activeSession: string | undefined;
+	const activeTools = new Map<string, ToolObservation>();
 	let server: Server | undefined,
 		registrationPath: string | undefined,
 		socketPath: string | undefined;
@@ -46,7 +51,8 @@ export function createBridge(
 	let questions: ReturnType<typeof nativeQuestions> | undefined;
 	const statusReads = new Set<AbortController>();
 	async function close() {
-		activeGeneration = undefined;
+		activeGeneration = activeSession = undefined;
+		activeTools.clear();
 		for (const read of statusReads) read.abort();
 		statusReads.clear();
 		questions?.close();
@@ -87,6 +93,7 @@ export function createBridge(
 		socketPath = join(runtime, `b-${generation}.sock`);
 		registrationPath = join(runtime, `b-${instance}.json`);
 		activeGeneration = generation;
+		activeSession = ctx.sessionManager.getSessionId();
 		const dispatch = (input = nativeInput(
 			{ instance, generation },
 			ctx,
@@ -320,6 +327,7 @@ export function createBridge(
 					generation,
 					capability,
 					getCommands,
+					activeTools,
 				);
 				if (req.url === "/snapshot") {
 					res
@@ -387,7 +395,29 @@ export function createBridge(
 		observe: (
 			event: "agent_start" | "agent_end" | "agent_settled",
 			ctx: ExtensionContext,
-		) => input?.observe(event, ctx),
+		) => {
+			if (event === "agent_settled") activeTools.clear();
+			input?.observe(event, ctx);
+		},
+		observeTool: (
+			event: ToolExecutionStartEvent | ToolExecutionEndEvent,
+			ctx: ExtensionContext,
+		) => {
+			if (
+				!activeGeneration ||
+				ctx.sessionManager.getSessionId() !== activeSession
+			)
+				return;
+			if (event.type === "tool_execution_end") {
+				activeTools.delete(event.toolCallId);
+			} else if (activeTools.size < 32 && event.toolCallId.length <= 128) {
+				activeTools.set(event.toolCallId, {
+					name: event.toolName.slice(0, 100),
+					summary: toolSummary(event.toolName, event.args),
+					state: "running",
+				});
+			}
+		},
 	};
 }
 export default function bridgeExtension(pi: ExtensionAPI) {
@@ -423,6 +453,10 @@ export default function bridgeExtension(pi: ExtensionAPI) {
 	pi.on("agent_settled", (_event, ctx) =>
 		bridge?.observe("agent_settled", ctx),
 	);
+	pi.on("tool_execution_start", (event, ctx) =>
+		bridge?.observeTool(event, ctx),
+	);
+	pi.on("tool_execution_end", (event, ctx) => bridge?.observeTool(event, ctx));
 	pi.on("session_shutdown", async () => {
 		await bridge?.close();
 		bridge = undefined;

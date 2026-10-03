@@ -76,6 +76,62 @@ function NativeImage({
 		</button>
 	);
 }
+function CopyText({ text, kind }: { text: string; kind: "code" | "answer" }) {
+	const [copy, setCopy] = useState<{
+		text: string;
+		status: "copying" | "copied" | "failed";
+	}>();
+	async function copyText() {
+		if (copy?.status === "copying") return;
+		setCopy({ text, status: "copying" });
+		try {
+			await navigator.clipboard.writeText(text);
+			setCopy({ text, status: "copied" });
+		} catch {
+			setCopy({ text, status: "failed" });
+		}
+	}
+	const status = copy?.text === text ? copy.status : undefined;
+	return (
+		<>
+			<button
+				type="button"
+				onClick={copyText}
+				aria-label={`Copy ${kind}`}
+				title={`Copy ${kind}`}
+				aria-disabled={copy?.status === "copying"}
+			>
+				{kind === "answer" ? (
+					<svg
+						aria-hidden="true"
+						width="18"
+						height="18"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="1.5"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					>
+						<rect x="8" y="8" width="12" height="13" rx="2" />
+						<path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />
+					</svg>
+				) : (
+					"Copy code"
+				)}
+			</button>
+			<span className="code-copy-status" role="status">
+				{status === "copied"
+					? "Copied"
+					: status === "failed"
+						? `Copy failed — select ${kind} to copy.`
+						: status === "copying"
+							? "Copying…"
+							: ""}
+			</span>
+		</>
+	);
+}
 function CodeBlock({
 	children,
 	node,
@@ -100,41 +156,11 @@ function CodeBlock({
 					.map((child) => child.value)
 					.join("")
 			: "";
-	const [copy, setCopy] = useState<{
-		text: string;
-		status: "copying" | "copied" | "failed";
-	}>();
-	async function copyCode() {
-		if (copy?.status === "copying") return;
-		setCopy({ text, status: "copying" });
-		try {
-			await navigator.clipboard.writeText(text);
-			setCopy({ text, status: "copied" });
-		} catch {
-			setCopy({ text, status: "failed" });
-		}
-	}
-	const status = copy?.text === text ? copy.status : undefined;
 	return (
 		<div className="code-block">
 			<div className="code-heading">
 				<span>{language || "Code"}</span>
-				<button
-					type="button"
-					onClick={copyCode}
-					aria-disabled={copy?.status === "copying"}
-				>
-					Copy code
-				</button>
-				<span className="code-copy-status" role="status">
-					{status === "copied"
-						? "Copied"
-						: status === "failed"
-							? "Copy failed — select code to copy."
-							: status === "copying"
-								? "Copying…"
-								: ""}
-				</span>
+				<CopyText text={text} kind="code" />
 			</div>
 			<pre tabIndex={0}>{children}</pre>
 		</div>
@@ -225,7 +251,31 @@ function ContentBlocks({
 					);
 				const content = (
 					<>
-						{toolOutput ? (
+						{block.type === "diff" ? (
+							<pre
+								className="tool-output edit-diff"
+								tabIndex={0}
+								aria-label="Edit diff"
+							>
+								<code>
+									{block.text.split("\n").map((line, i, lines) => (
+										<span
+											key={i}
+											className={
+												line.startsWith("+")
+													? "diff-added"
+													: line.startsWith("-")
+														? "diff-deleted"
+														: "diff-context"
+											}
+										>
+											{line}
+											{i < lines.length - 1 ? "\n" : ""}
+										</span>
+									))}
+								</code>
+							</pre>
+						) : toolOutput ? (
 							<pre className="tool-output" tabIndex={0}>
 								{block.text}
 							</pre>
@@ -312,8 +362,21 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 		const output = isTool
 			? item.blocks.filter((block) => !mediaBlock(block))
 			: [];
+		const answer =
+			item.role === "assistant"
+				? item.blocks
+						.filter((block) => block.type === "text")
+						.map((block) => block.text)
+						.join("\n\n")
+				: "";
+		const errorPreview =
+			item.tool?.state === "error"
+				? output.find((block) => block.type === "text")?.text.slice(0, 240)
+				: undefined;
 		const shortened = output.some((block) =>
-			block.type === "text" || block.type === "thinking"
+			block.type === "text" ||
+			block.type === "thinking" ||
+			block.type === "diff"
 				? !!block.omittedChars
 				: block.type === "unavailable",
 		);
@@ -323,7 +386,7 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 			item.blocks.length > 0 &&
 			item.blocks.every((block) => block.type === "tool");
 		const redundantRole =
-			(isTool && !!output.length) || item.role === "assistant";
+			(isTool && (!!output.length || !!item.tool)) || item.role === "assistant";
 		const article = (
 			<article
 				className={`message message-${item.role === "user" ? "user" : item.role === "assistant" ? "assistant" : "event"}${onlyToolCalls ? " visually-hidden" : ""}`}
@@ -338,10 +401,28 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 				</h3>
 				{isTool ? (
 					<>
-						{!!output.length && (
+						{(!!output.length || !!item.tool) && (
 							<details className="tool-disclosure">
 								<summary>
-									<ToolLabel name={item.role.slice(6).trimStart()} />
+									<ToolLabel
+										name={item.tool?.name ?? item.role.slice(6).trimStart()}
+									/>
+									{item.tool?.summary && (
+										<span className="tool-summary" title={item.tool.summary}>
+											{item.tool.summary}
+										</span>
+									)}
+									{item.tool && (
+										<span
+											className={`tool-state tool-state-${item.tool.state}`}
+										>
+											{item.tool.state === "error"
+												? "Failed"
+												: item.tool.state === "running"
+													? "Running"
+													: "Done"}
+										</span>
+									)}
 									<span className="visually-hidden"> · output</span>
 									{shortened ? " · shortened" : ""}
 									<svg
@@ -355,8 +436,20 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 										<path d="m9 5 7 7-7 7" />
 									</svg>
 								</summary>
+								{item.tool?.summary && (
+									<p
+										className="tool-detail-summary"
+										tabIndex={0}
+										aria-label="Tool path or command"
+									>
+										{item.tool.summary}
+									</p>
+								)}
 								<ContentBlocks blocks={output} snapshot={snapshot} toolOutput />
 							</details>
+						)}
+						{errorPreview && (
+							<p className="tool-error-preview">{errorPreview}</p>
 						)}
 						<ContentBlocks
 							blocks={item.blocks.filter(mediaBlock)}
@@ -365,11 +458,18 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 						/>
 					</>
 				) : (
-					<ContentBlocks
-						blocks={item.blocks}
-						snapshot={snapshot}
-						imageOffset={imageOffset}
-					/>
+					<>
+						<ContentBlocks
+							blocks={item.blocks}
+							snapshot={snapshot}
+							imageOffset={imageOffset}
+						/>
+						{answer && (
+							<div className="answer-actions">
+								<CopyText text={answer} kind="answer" />
+							</div>
+						)}
+					</>
 				)}
 			</article>
 		);
@@ -404,6 +504,20 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 			)}
 			<section className="conversation" aria-label="Conversation">
 				{conversation}
+				{(snapshot?.model || snapshot?.context) && (
+					<p className="conversation-metadata">
+						{snapshot.model && <span>{snapshot.model}</span>}
+						{snapshot.context && (
+							<span title="Estimated native context usage for the selected conversation">
+								Context{" "}
+								{snapshot.context.tokens === null
+									? "unknown"
+									: `~${Math.round((snapshot.context.tokens / snapshot.context.window) * 100)}%`}{" "}
+								· {snapshot.context.window.toLocaleString()} token limit
+							</span>
+						)}
+					</p>
+				)}
 			</section>
 		</>
 	);

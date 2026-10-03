@@ -1081,6 +1081,251 @@ describe("C4 Stop gateway authority", () => {
 });
 
 describe("native snapshot and private resources", () => {
+	it("projects native tool summaries, failures and edit details without changing history", () => {
+		const ctx = context();
+		const base = ctx.sessionManager.getBranch()[0];
+		if (base.type !== "message" || base.message.role !== "toolResult")
+			throw Error("fixture type");
+		const usage = {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		const entries: ReturnType<typeof ctx.sessionManager.getBranch> = [
+			{
+				...base,
+				id: "calls",
+				message: {
+					role: "assistant",
+					api: "openai-completions",
+					provider: "fixture",
+					model: "fixture",
+					stopReason: "toolUse",
+					timestamp: 0,
+					usage,
+					content: [
+						{
+							type: "toolCall",
+							id: "edit-call",
+							name: "edit",
+							arguments: {
+								path: "src/main.ts",
+								oldText: "secret old",
+								newText: "secret new",
+							},
+						},
+						{
+							type: "toolCall",
+							id: "shell-call",
+							name: "functions.bash",
+							arguments: { command: "npm\ntest\u202e", hidden: "secret" },
+						},
+						{
+							type: "toolCall",
+							id: "unknown-call",
+							name: "read_custom",
+							arguments: { path: "secret path" },
+						},
+						{
+							type: "toolCall",
+							id: "long-call",
+							name: "read",
+							arguments: { path: "x".repeat(1000) },
+						},
+					],
+				},
+			},
+			...[
+				{
+					id: "edit-result",
+					name: "edit",
+					call: "edit-call",
+					error: false,
+					details: { diff: "-1 old\n+1 new", private: "secret detail" },
+				},
+				{
+					id: "shell-result",
+					name: "functions.bash",
+					call: "shell-call",
+					error: true,
+					details: { diff: "not an edit", private: "secret detail" },
+				},
+				{
+					id: "unknown-result",
+					name: "read_custom",
+					call: "unknown-call",
+					error: false,
+					details: undefined,
+				},
+				{
+					id: "long-result",
+					name: "read",
+					call: "long-call",
+					error: false,
+					details: undefined,
+				},
+			].map((item) => ({
+				...base,
+				id: item.id,
+				message: {
+					...base.message,
+					role: "toolResult" as const,
+					toolName: item.name,
+					toolCallId: item.call,
+					isError: item.error,
+					content: [
+						{
+							type: "text" as const,
+							text: item.error ? "Command failed" : "Success",
+						},
+					],
+					details: item.details,
+				},
+			})),
+		];
+		ctx.sessionManager.getBranch = () => entries;
+		const original = JSON.stringify(entries);
+		const snapshot = nativeSnapshot(
+			ctx,
+			"a".repeat(32),
+			"b".repeat(32),
+			"c".repeat(64),
+		).snapshot;
+		expect(Value.Check(SnapshotSchema, snapshot)).toBe(true);
+		expect(snapshot.items[1].tool).toEqual({
+			name: "edit",
+			summary: "src/main.ts",
+			state: "completed",
+		});
+		expect(snapshot.items[1].blocks).toEqual([
+			{ type: "text", text: "Success" },
+			{ type: "diff", text: "-1 old\n+1 new" },
+		]);
+		expect(snapshot.items[2].tool).toEqual({
+			name: "functions.bash",
+			summary: "npm test ",
+			state: "error",
+		});
+		expect(snapshot.items[2].blocks).toEqual([
+			{ type: "text", text: "Command failed" },
+		]);
+		expect(snapshot.items[3].tool?.summary).toBe("");
+		expect(snapshot.items[4].tool?.summary).toBe("x".repeat(512));
+		expect(JSON.stringify(snapshot)).not.toMatch(/secret|not an edit/);
+		expect(JSON.stringify(entries)).toBe(original);
+	});
+	it("publishes native model and context estimates, including unknown usage", () => {
+		const ctx = context();
+		Object.assign(ctx.model!, { provider: "fixture", id: "model" });
+		const snapshot = () =>
+			nativeSnapshot(ctx, "a".repeat(32), "b".repeat(32), "c".repeat(64))
+				.snapshot;
+		for (const tokens of [51_200, null]) {
+			ctx.getContextUsage = () => ({
+				tokens,
+				contextWindow: 128_000,
+				percent: tokens === null ? null : 40,
+			});
+			expect(snapshot().model).toBe("fixture/model");
+			expect(snapshot().context).toEqual({ tokens, window: 128_000 });
+			expect(Value.Check(SnapshotSchema, snapshot())).toBe(true);
+		}
+		for (const tokens of [-1, NaN, Infinity]) {
+			ctx.getContextUsage = () => ({
+				tokens,
+				contextWindow: 128_000,
+				percent: 0,
+			});
+			expect(snapshot().context).toBeUndefined();
+		}
+		ctx.getContextUsage = () => undefined;
+		ctx.model = undefined;
+		expect(snapshot()).not.toHaveProperty("model");
+		expect(snapshot()).not.toHaveProperty("context");
+	});
+	it("observes parallel native tool execution through UDS and clears it on settlement and generation changes", async () => {
+		const path = runtime(),
+			bridge = createBridge(path),
+			ctx = context();
+		try {
+			const first = await bridge.start(ctx);
+			const start = (id: string, owner = ctx) =>
+				bridge.observeTool(
+					{
+						type: "tool_execution_start",
+						toolCallId: id,
+						toolName: "bash",
+						args: { command: "npm test" },
+					},
+					owner,
+				);
+			start("outer");
+			bridge.observeTool(
+				{
+					type: "tool_execution_start",
+					toolCallId: "outer/1",
+					parentToolCallId: "outer",
+					toolName: "read",
+					args: { path: "src/main.ts" },
+				},
+				ctx,
+			);
+			start("foreign", {
+				...ctx,
+				sessionManager: {
+					...ctx.sessionManager,
+					getSessionId: () => "foreign",
+				},
+			});
+			let snapshot = await readSnapshot(path, first);
+			expect(
+				snapshot.items
+					.filter((item) => item.tool?.state === "running")
+					.map((item) => item.tool),
+			).toEqual([
+				{ name: "bash", summary: "npm test", state: "running" },
+				{ name: "read", summary: "src/main.ts", state: "running" },
+			]);
+			bridge.observeTool(
+				{
+					type: "tool_execution_end",
+					toolCallId: "outer/1",
+					toolName: "read",
+					result: {},
+					isError: false,
+				},
+				ctx,
+			);
+			expect(
+				(await readSnapshot(path, first)).items.filter(
+					(item) => item.tool?.state === "running",
+				),
+			).toHaveLength(1);
+			bridge.observe("agent_settled", ctx);
+			expect(
+				(await readSnapshot(path, first)).items.filter(
+					(item) => item.tool?.state === "running",
+				),
+			).toHaveLength(0);
+			for (let i = 0; i < 40; i++) start(`bounded-${i}`);
+			expect(
+				(await readSnapshot(path, first)).items.filter(
+					(item) => item.tool?.state === "running",
+				),
+			).toHaveLength(32);
+			const second = await bridge.start(ctx);
+			snapshot = await readSnapshot(path, second);
+			expect(
+				snapshot.items.filter((item) => item.tool?.state === "running"),
+			).toHaveLength(0);
+		} finally {
+			await bridge.close();
+			rmSync(path, { recursive: true, force: true });
+		}
+	});
 	it("observes only native active-branch message timestamps and keeps summary metadata out of strict snapshots", () => {
 		const ctx = context(),
 			original = ctx.sessionManager.getBranch()[0];

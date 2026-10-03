@@ -24,6 +24,16 @@ export const limits = {
 const opaque = "^[a-f0-9]{32}$";
 const id = Type.String({ pattern: opaque });
 const text = Type.String({ maxLength: limits.blockText });
+const ToolSchema = Type.Object({
+	name: Type.String({ maxLength: 100 }),
+	summary: Type.String({ maxLength: 512 }),
+	state: Type.Union([
+		Type.Literal("running"),
+		Type.Literal("completed"),
+		Type.Literal("error"),
+	]),
+});
+export type ToolObservation = Static<typeof ToolSchema>;
 const BlockSchema = Type.Union([
 	Type.Object({
 		type: Type.Literal("text"),
@@ -32,6 +42,11 @@ const BlockSchema = Type.Union([
 	}),
 	Type.Object({
 		type: Type.Literal("thinking"),
+		text,
+		omittedChars: Type.Optional(Type.Integer({ minimum: 1 })),
+	}),
+	Type.Object({
+		type: Type.Literal("diff"),
 		text,
 		omittedChars: Type.Optional(Type.Integer({ minimum: 1 })),
 	}),
@@ -81,6 +96,13 @@ export const SnapshotSchema = Type.Object(
 		parent: Type.Union([Type.Literal("working"), Type.Literal("idle")]),
 		background: Type.Literal("unobserved"),
 		truncated: Type.Boolean(),
+		model: Type.Optional(Type.String({ maxLength: 256 })),
+		context: Type.Optional(
+			Type.Object({
+				tokens: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+				window: Type.Number({ exclusiveMinimum: 0 }),
+			}),
+		),
 		commands: Type.Optional(
 			Type.Array(CommandSchema, { maxItems: commandLimits.count }),
 		),
@@ -90,6 +112,7 @@ export const SnapshotSchema = Type.Object(
 			Type.Object({
 				id: Type.String({ maxLength: 200 }),
 				role: Type.String({ maxLength: 40 }),
+				tool: Type.Optional(ToolSchema),
 				blocks: Type.Array(BlockSchema, { maxItems: limits.blocks }),
 			}),
 			{ maxItems: limits.items },

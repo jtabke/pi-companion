@@ -12,6 +12,7 @@ import {
 	type Block,
 	type Summary,
 	type Status,
+	type ToolObservation,
 } from "../shared/protocol.js";
 import { inspectImage, type NativeImage } from "./media.js";
 export function nativeSummary(
@@ -71,12 +72,39 @@ export function nativeStatus(
 		canonicalSession,
 	};
 }
+/** Only recognized native tools expose a path/command; never stringify arbitrary arguments. */
+export function toolSummary(name: string, args: unknown): string {
+	if (!args || typeof args !== "object") return "";
+	const values = args as Record<string, unknown>;
+	const value =
+		name === "bash" || name === "functions.bash"
+			? values.command
+			: [
+						"read",
+						"write",
+						"edit",
+						"functions.read",
+						"functions.write",
+						"functions.edit",
+				  ].includes(name)
+				? values.path
+				: undefined;
+	return typeof value === "string"
+		? value
+				.replace(
+					/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
+					" ",
+				)
+				.slice(0, 512)
+		: "";
+}
 export function nativeSnapshot(
 	ctx: ExtensionContext,
 	instance: string,
 	generation: string,
 	capability: string,
 	getCommands?: ExtensionAPI["getCommands"],
+	activeTools: ReadonlyMap<string, ToolObservation> = new Map(),
 ) {
 	const { project, session, parent, background } = nativeSummary(
 		ctx,
@@ -95,6 +123,20 @@ export function nativeSnapshot(
 		omittedItems: 0,
 		items: [],
 	};
+	if (
+		typeof ctx.model?.id === "string" &&
+		typeof ctx.model.provider === "string"
+	)
+		snapshot.model = `${ctx.model.provider}/${ctx.model.id}`.slice(0, 256);
+	const usage = ctx.getContextUsage?.();
+	if (
+		usage &&
+		Number.isFinite(usage.contextWindow) &&
+		usage.contextWindow > 0 &&
+		(usage.tokens === null ||
+			(Number.isFinite(usage.tokens) && usage.tokens >= 0))
+	)
+		snapshot.context = { tokens: usage.tokens, window: usage.contextWindow };
 	const commands = nativeCommands(getCommands);
 	if (commands) snapshot.commands = commands;
 	const media = new Map<string, ReturnType<typeof inspectImage>>();
@@ -117,6 +159,14 @@ export function nativeSnapshot(
 		if (selected.length < limits.items) selected.push({ entry, message });
 	}
 	selected.reverse();
+	const calls = new Map<string, string>();
+	for (const { message } of selected) {
+		if (message.role !== "assistant") continue;
+		for (const block of message.content) {
+			if (block.type === "toolCall")
+				calls.set(block.id, toolSummary(block.name, block.arguments));
+		}
+	}
 	let textRemaining: number = limits.text,
 		imageBytes = 0;
 	snapshot.omittedItems = messageCount - selected.length;
@@ -131,6 +181,18 @@ export function nativeSnapshot(
 		const { entry, message } = selected[position];
 		// Native branch messages are finalized; live partial assistant messages are not read here.
 		const blocks: Block[] = [];
+		const details: unknown =
+			message.role === "toolResult" ? message.details : undefined;
+		const diff =
+			message.role === "toolResult" &&
+			!message.isError &&
+			["edit", "functions.edit"].includes(message.toolName) &&
+			details &&
+			typeof details === "object" &&
+			"diff" in details &&
+			typeof details.diff === "string"
+				? details.diff
+				: undefined;
 		const rawContent =
 			"content" in message
 				? message.content
@@ -140,7 +202,9 @@ export function nativeSnapshot(
 		const content =
 			typeof rawContent === "string"
 				? [{ type: "text" as const, text: rawContent }]
-				: rawContent;
+				: [...rawContent];
+		// Native edit details own the diff. Keep the original result and its images too.
+		if (diff) content.push({ type: "text", text: diff });
 		const contentLimit =
 			content.length > limits.blocks ? limits.blocks - 1 : content.length;
 		let contentOmitted = content.length > contentLimit;
@@ -202,7 +266,7 @@ export function nativeSnapshot(
 					contentOmitted = true;
 				else
 					blocks.push({
-						type: block.type,
+						type: diff && index === content.length - 1 ? "diff" : block.type,
 						text,
 						...(omittedChars ? { omittedChars } : {}),
 					});
@@ -225,10 +289,47 @@ export function nativeSnapshot(
 				message.role === "toolResult"
 					? `tool: ${message.toolName.slice(0, 30)}`
 					: message.role,
+			...(message.role === "toolResult"
+				? {
+						tool: {
+							name: message.toolName.slice(0, 100),
+							summary: calls.get(message.toolCallId) ?? "",
+							state: message.isError
+								? ("error" as const)
+								: ("completed" as const),
+						},
+					}
+				: {}),
 			blocks,
 		});
 	}
 	snapshot.items.reverse();
+	const completed = new Set(
+		selected.flatMap(({ message }) =>
+			message.role === "toolResult" ? [message.toolCallId] : [],
+		),
+	);
+	for (const [id, tool] of activeTools) {
+		if (completed.has(id)) continue;
+		snapshot.items.push({
+			id: `${generation}:active:${id}`.slice(0, 200),
+			role: `tool: ${tool.name.slice(0, 30)}`,
+			tool,
+			blocks: [],
+		});
+		if (snapshot.items.length > limits.items) {
+			const removed = snapshot.items.shift()!;
+			snapshot.omittedItems++;
+			snapshot.truncated = true;
+			for (const block of removed.blocks)
+				if (block.type === "image") media.delete(block.ref);
+		}
+		if (
+			snapshot.items.filter((item) => item.tool?.state === "running").length >=
+			32
+		)
+			break;
+	}
 	// JSON escaping and many small blocks can exceed a character-only budget.
 	while (
 		Buffer.byteLength(JSON.stringify(snapshot)) > limits.snapshotBytes &&
