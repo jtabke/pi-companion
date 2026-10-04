@@ -261,32 +261,10 @@ function App() {
 		current,
 		reachable,
 		selectedSummary,
-		inputIdle,
 		held,
 		operating,
-		composerAvailability,
-		inputNotice,
-		reloadNotice,
-		inputReceipt,
-		outstanding,
-		stopAttempt,
-		stopReceipt,
-		draft,
-		attachment,
-		preview,
-		editDraft,
-		pickImage,
-		removeImage,
-		commands,
-		commandModels,
-		acknowledgeCommand,
-		canSend,
-		canBusyText,
-		canRetryInput,
 		canControl,
-		canStop,
-		sendText,
-		requestStop,
+		composer,
 		controlAction,
 		answerQuestionnaire,
 		renameEditor,
@@ -747,51 +725,20 @@ function App() {
 					)}
 				{paired &&
 					selected &&
-					inputReceipt?.routine &&
-					inputReceipt.deliverAs && (
+					composer.inputReceipt?.routine &&
+					composer.inputReceipt.deliverAs && (
 						<section
 							className="browser-input-receipt"
 							aria-label="Latest browser request"
 						>
 							<p className="receipt-caption">Latest browser request</p>
-							<ActionReceipt {...inputReceipt} />
+							<ActionReceipt {...composer.inputReceipt} />
 						</section>
 					)}
 			</ChatViewport>
 			<Composer
-				paired={paired}
-				selected={selected}
-				selectedKey={selectedKey}
-				reachable={reachable}
-				inputIdle={inputIdle}
-				held={held}
-				operating={operating}
-				composerAvailability={composerAvailability}
-				inputNotice={inputNotice}
-				reloadNotice={reloadNotice}
-				inputReceipt={inputReceipt}
-				outstanding={outstanding}
-				stopAttempt={stopAttempt}
-				stopReceipt={stopReceipt}
-				draft={draft}
-				attachment={attachment}
-				preview={preview}
-				editDraft={editDraft}
-				pickImage={pickImage}
-				removeImage={removeImage}
-				commands={commands}
-				commandModels={commandModels}
-				acknowledgeCommand={acknowledgeCommand}
-				canSend={canSend}
-				canBusyText={canBusyText}
-				canRetryInput={canRetryInput}
-				canControl={canControl}
-				canStop={canStop}
-				sendText={sendText}
-				requestStop={requestStop}
+				session={composer}
 				draftInput={draftInput}
-				conflict={view.conflict}
-				controller={view.controller}
 				observedQuestions={observedQuestions}
 				onReviewQuestions={() => setQuestionReview((value) => value + 1)}
 				onOpenSessions={openSessions}

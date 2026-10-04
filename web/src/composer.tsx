@@ -1,43 +1,10 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
-import type { Identity, View, TextRequest } from "../../src/shared/protocol.js";
+import type { Identity, TextRequest } from "../../src/shared/protocol.js";
 import type { useBrowserSession } from "./use-browser-session.js";
 
-type ComposerProps = Pick<
-	ReturnType<typeof useBrowserSession>,
-	| "paired"
-	| "selected"
-	| "selectedKey"
-	| "reachable"
-	| "inputIdle"
-	| "held"
-	| "operating"
-	| "composerAvailability"
-	| "inputNotice"
-	| "reloadNotice"
-	| "inputReceipt"
-	| "outstanding"
-	| "stopAttempt"
-	| "stopReceipt"
-	| "draft"
-	| "attachment"
-	| "preview"
-	| "editDraft"
-	| "pickImage"
-	| "removeImage"
-	| "commands"
-	| "commandModels"
-	| "acknowledgeCommand"
-	| "canSend"
-	| "canBusyText"
-	| "canRetryInput"
-	| "canControl"
-	| "canStop"
-	| "sendText"
-	| "requestStop"
-> & {
+type ComposerProps = {
+	session: ReturnType<typeof useBrowserSession>["composer"];
 	draftInput: React.RefObject<HTMLTextAreaElement | null>;
-	conflict: View["conflict"];
-	controller: View["controller"];
 	observedQuestions: number;
 	onReviewQuestions: () => void;
 	onOpenSessions: () => void;
@@ -88,43 +55,46 @@ export function ActionReceipt({
 	);
 }
 export function Composer({
-	paired,
-	selected,
-	selectedKey,
-	reachable,
-	inputIdle,
-	held,
-	operating,
-	composerAvailability,
-	inputNotice,
-	reloadNotice,
-	inputReceipt,
-	outstanding,
-	stopAttempt,
-	stopReceipt,
-	draft,
-	attachment,
-	preview,
-	editDraft,
-	pickImage,
-	removeImage,
-	commands,
-	commandModels,
-	acknowledgeCommand,
-	canSend,
-	canBusyText,
-	canRetryInput,
-	canControl,
-	canStop,
-	sendText,
-	requestStop,
+	session,
 	draftInput,
-	conflict,
-	controller,
 	observedQuestions,
 	onReviewQuestions,
 	onOpenSessions,
 }: ComposerProps) {
+	const {
+		paired,
+		selected,
+		selectedKey,
+		reachable,
+		inputIdle,
+		held,
+		operating,
+		composerAvailability,
+		inputNotice,
+		reloadNotice,
+		inputReceipt,
+		outstanding,
+		stopAttempt,
+		stopReceipt,
+		draft,
+		attachment,
+		preview,
+		editDraft,
+		pickImage,
+		removeImage,
+		commands,
+		commandModels,
+		acknowledgeCommand,
+		canSend,
+		canBusyText,
+		canRetryInput,
+		canControl,
+		canStop,
+		sendText,
+		requestStop,
+		conflict,
+		controller,
+	} = session;
 	const modelDialog = useRef<HTMLDialogElement>(null);
 	const [modelPickerOwner, setModelPickerOwner] = useState<string>();
 	const [modelChoice, setModelChoice] = useState("");

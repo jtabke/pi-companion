@@ -1487,61 +1487,74 @@ export function useBrowserSession({
 		current,
 		reachable,
 		selectedSummary,
-		inputIdle,
 		held,
 		operating,
-		composerAvailability,
-		reloadNotice:
-			reachable && !!reloadNotice && identityKey(reloadNotice) === selectedKey,
-		inputNotice:
-			inputNotice &&
-			`${inputNotice.identity.instance}:${inputNotice.identity.generation}` ===
-				selectedKey
-				? inputNotice
-				: undefined,
-		inputReceipt:
-			inputReceipt &&
-			`${inputReceipt.identity.instance}:${inputReceipt.identity.generation}` ===
-				selectedKey
-				? inputReceipt
-				: undefined,
-		stopReceipt:
-			stopReceipt &&
-			`${stopReceipt.identity.instance}:${stopReceipt.identity.generation}` ===
-				selectedKey
-				? stopReceipt
-				: undefined,
-		outstanding,
-		stopAttempt,
-		draft,
-		attachment,
-		preview,
-		editDraft,
-		pickImage,
-		removeImage,
-		commands,
-		commandModels,
-		acknowledgeCommand: () => {
-			if (!operating && outstanding?.nativeCommand && outstanding.uncertain) {
-				inputResult(
-					outstanding,
-					"Command outcome remains unknown — check Pi before submitting another command",
-				);
-				const key = identityKey(outstanding.identity);
-				if (drafts.current.get(key)?.text === outstanding.text) {
-					drafts.current.set(key, { text: "" });
-					if (key === selectedKey) setDraft("");
-				}
-				setOutstanding(undefined);
-			}
-		},
-		canSend,
-		canBusyText,
-		canRetryInput,
 		canControl,
-		canStop,
-		sendText,
-		requestStop,
+		composer: {
+			paired,
+			selected,
+			selectedKey,
+			reachable,
+			conflict: view.conflict,
+			controller: view.controller,
+			inputIdle,
+			held,
+			operating,
+			composerAvailability,
+			reloadNotice:
+				reachable &&
+				!!reloadNotice &&
+				identityKey(reloadNotice) === selectedKey,
+			inputNotice:
+				inputNotice &&
+				`${inputNotice.identity.instance}:${inputNotice.identity.generation}` ===
+					selectedKey
+					? inputNotice
+					: undefined,
+			inputReceipt:
+				inputReceipt &&
+				`${inputReceipt.identity.instance}:${inputReceipt.identity.generation}` ===
+					selectedKey
+					? inputReceipt
+					: undefined,
+			stopReceipt:
+				stopReceipt &&
+				`${stopReceipt.identity.instance}:${stopReceipt.identity.generation}` ===
+					selectedKey
+					? stopReceipt
+					: undefined,
+			outstanding,
+			stopAttempt,
+			draft,
+			attachment,
+			preview,
+			editDraft,
+			pickImage,
+			removeImage,
+			commands,
+			commandModels,
+			acknowledgeCommand: () => {
+				if (!operating && outstanding?.nativeCommand && outstanding.uncertain) {
+					inputResult(
+						outstanding,
+						"Command outcome remains unknown — check Pi before submitting another command",
+					);
+					const key = identityKey(outstanding.identity);
+					if (drafts.current.get(key)?.text === outstanding.text) {
+						drafts.current.set(key, { text: "" });
+						if (key === selectedKey) setDraft("");
+					}
+					setOutstanding(undefined);
+				}
+			},
+			canSend,
+			canBusyText,
+			canRetryInput,
+			canControl,
+			canStop,
+			sendText,
+			requestStop,
+		},
 		controlAction,
 		answerQuestionnaire,
 		renameEditor:

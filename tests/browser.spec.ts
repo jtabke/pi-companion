@@ -217,7 +217,7 @@ test("C4 Stop ignored abort stays Stopping; immutable explicit retry survives sw
 	).toBe(before + 1);
 	await page.getByRole("button", { name: "Retry same Stop request" }).click();
 
-	expect(bodies).toHaveLength(2);
+	await expect.poll(() => bodies.length).toBe(2);
 	expect(bodies[1].requestId).toBe(bodies[0].requestId);
 	expect(bodies[1].instance).toBe(identity.instance);
 	expect(bodies[1].generation).toBe(bodies[0].generation); // Reset replaces the generation; browser reconciles its stale initial list.
