@@ -17,8 +17,9 @@ replacement for Pi's terminal, tools, extensions or conversation storage.
   Status dots and labels show observed activity and questions needing answers. The drawer shows the selected session's
   model and rename pencil in its session row. The top shows only the live-terminal count.
   A separate compact footer keeps Leave session, browser control and Device access visible.
-  Swipe from the left edge on narrow screens to open the animated sessions drawer,
-  then swipe left inside it to close. Reduced-motion settings disable the animation.
+  On narrow screens, drag from the left edge or the editor's sessions handle to open
+  the drawer, then drag left inside it to close. The drawer and backdrop follow your finger;
+  release speed sets the remaining animation duration. Reduced motion removes the settling animation.
 - **Image inspection:** tap native tool-returned images to enlarge/zoom them, without an
   extra frame or visible caption. Image buttons retain accessible labels and keyboard focus.
 - **Readable tool output:** inspect compact tool stacks, filename and command summaries,
@@ -30,8 +31,9 @@ replacement for Pi's terminal, tools, extensions or conversation storage.
 - **Busy text:** choose Steer or Follow-up beside **+**, then tap the send arrow,
   without stopping Pi. Review the latest request's text and mode
   in an expandable receipt; it is not Pi's live queue.
-- **Slash suggestions:** discover the selected terminal's prompt templates and skills;
-  choose a suggestion, then Send. Unverified extension commands remain terminal-only.
+- **Native slash commands:** run `/new` and `/reload` in the existing Pi terminal, or
+  choose a model in the browser with `/model`. Prompt templates and skills remain available.
+  Suggestions appear above the input; unverified commands stay terminal-only.
 - **Direct actions:** Send, questionnaire responses, Rename and Stop acquire free control
   when clicked. Another browser holder still requires a separate explicit takeover.
 - **Explicit Stop:** request that Pi stop its current parent activity while keeping
@@ -91,14 +93,21 @@ Update the sample scenario in the script when the illustrated journey changes.
 ## Browser input
 
 The composer starts with +, text and Send on one compact row inside a rounded
-surface. On screens narrower than 640px, a nonempty draft or an available busy-mode
-selector gets a full-width editor above the action row. An empty idle draft restores the compact row. Text grows upward
-as it wraps and scrolls natively after a height cap. The shell follows the
-browser's reported visual viewport at normal zoom. It rechecks app return, orientation,
-and focus transitions over the next two animation frames because WebKit can update
-measurements after the event. Invalid readings fall back to CSS viewport sizing instead
-of retaining an old keyboard-sized shell. This uses no permanent polling, forced reload,
-or focus/scroll reset. Text sizing stays at 100% to prevent Safari's automatic rotation
+surface. Screens narrower than 640px also show a 44px sessions handle: tap it or drag
+right to open the drawer without swiping inside editable text. A nonempty draft or an
+available busy-mode selector gets a full-width editor above the action row, with leading
+space reserved for that handle. An empty idle draft restores the compact row. Text grows upward
+as it wraps and scrolls natively after a height cap. CSS owns the shell layout, with the
+composer in normal flow and the conversation in its own scroll area. One viewport adapter
+adjusts only shell geometry at normal zoom. After viewport changes, page movement, app return,
+orientation, focus or input, it remeasures each animation frame for one second after the
+last event, then stops. This covers late keyboard or dictation measurements without
+permanent polling. Unchanged measurements do not rewrite styles. Matching viewports,
+invalid readings and pinch zoom remove overrides and use CSS viewport sizing instead
+of retaining an old keyboard-sized shell. The adapter does not reset focus or scroll,
+change drafts, reload the page or send input. The sessions drawer and model picker use
+that same geometry so their scrollable contents and actions fit the visible area.
+Text sizing stays at 100% to prevent Safari's automatic rotation
 inflation; pinch zoom and explicit text enlargement remain available.
 Uncertain input uses one outcome receipt with Details and explicit Retry;
 a simultaneous browser-control blocker remains separate. Notices scroll within a bounded
@@ -106,7 +115,9 @@ area rather than pushing the editor offscreen.
 Picking multiple images or pasting repeatedly appends local thumbnails in a horizontal
 row above the editor; each image can be removed before sending. Short keyboard layouts
 retain readable notices and complete touch targets without covering the delivery selector. Jump to latest is a floating circle centered above the composer, not a separate
-row or full-width overlay. The session name, project and activity share one compact
+row or full-width overlay. Pressing Jump to latest keeps the editor focused so keyboard
+closure cannot move the button before release; the click scrolls to the newest content.
+The session name, project and activity share one compact
 header; long names are shortened visually, with full identity retained in the accessible
 session button and drawer. Keyboard focus uses a small neutral ring around the drawer
 icon, not a full-width header highlight; the whole header button remains tappable.
@@ -162,17 +173,71 @@ or reconnecting never resends input. Busy image attachments remain local and mus
 removed before requesting busy text. Their routine explanation stays in the editor's accessible description, not above the thumbnails. Safety and error
 notices remain visible.
 
-While Pi is idle, type `/` for suggestions from that selected session. Tap a supported
-prompt template or skill, or use Arrow keys and Enter/Tab to select, then tap **Send**.
-Selection only edits the draft; Escape closes suggestions. Arguments remain unchanged.
-Extension commands are marked for terminal use until browser interaction support is
-verified. Built-in/unknown commands, busy slash input and slash-with-image input are not
-sent to the model as ordinary text. This is not full terminal-command parity.
+While Pi is idle, type `/` for suggestions from that selected session. The scrollable
+suggestions appear above the input as compact command-and-description rows. Terminal-only
+extension commands are not suggested. Typing `/` or a matching prefix shows no warning.
+Tap a supported native command, prompt template or skill, or use Arrow keys and Enter/Tab to select,
+then tap **Send**. Selection only edits the draft; Escape closes suggestions.
+Prompt-template and skill arguments remain unchanged.
 
-After updating, **fully restart the affected Pi terminals**, then restart the known gateway
-with its existing origin/runtime/auth directory and refresh the browser. Select the new
-live session if its identity changed. A still-loaded older bridge disables busy text and
-slash execution, and may safely reject the new multi-image envelope until restarted. These updates do not require a new pairing code for remembered access.
+### Native commands
+
+Companion uses the public custom-editor hook to reach Pi's existing terminal submission
+handler. It does not copy command implementations, send these commands to a model,
+modify Pi source, or simulate terminal keystrokes.
+
+- `/new` starts a fresh native conversation. The old browser view is cleared; Pi remains
+  the history owner. The terminal process and Companion instance remain the same.
+- `/reload` reloads Pi resources and replaces the bridge generation without replacing
+  the terminal or native session. Companion follows the same instance with fresh authority.
+  After observing Pi's native reload event in a new live snapshot, Companion shows
+  **Pi reloaded** for four seconds. Dispatch alone, refresh and session selection do not
+  show this confirmation; uncertain command receipts remain unresolved.
+- Selecting `/model` in autocomplete (tap or Enter/Tab), or submitting bare `/model`,
+  opens a scrollable list from Pi's available model snapshot, limited to its scoped models
+  when configured. Choose a model with touch or the radio group's Arrow keys.
+  **Use model** writes `/model provider/model` into the draft; **Send** executes Pi's
+  native command. Opening the list and choosing a model never claim control or send input.
+  Cancel/Escape sends nothing. At most
+  128 models within a 65,536-byte catalog are shown. Use the terminal for other models.
+
+These native commands require idle Pi with no queued input, no images, and an empty
+terminal draft. If the terminal contains unsent text, clear or send it there first.
+If another extension replaces the editor after the bridge installs its hook, native
+commands become unavailable rather than calling a stale editor.
+Forwarding is not a completion receipt. A lost response retains the command and original
+identity. Native commands have no retry button: inspect Pi, then **Dismiss command receipt
+without retrying** before making another deliberate request. Reload, reconnect and session
+changes never resend input or acquire browser control automatically.
+
+| Terminal-only commands                                                                                 | Why                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/settings`, `/thinking`, `/scoped-models`, `/tree`, `/fork`, `/resume`, `/clone`, `/import`, `/trust` | Their terminal interaction or session workflow has no verified browser adapter in this slice.                                                 |
+| `/login`, `/logout`                                                                                    | Provider authentication remains terminal-owned; no browser credential flow is implemented.                                                    |
+| `/export`, `/share`, `/bug`, `/compact`, `/quit`                                                       | File, publication, provider-call or process-exit effects are outside this command slice.                                                      |
+| `/copy`, `/name`, `/session`, `/changelog`, `/hotkeys`, terminal-only novelty/debug commands           | Use the terminal. Companion's existing Copy answer and Rename controls remain available separately.                                           |
+| Extension commands                                                                                     | Arbitrary dialogs and custom terminal components are not browser-mirrored. Their interaction and authority must be verified before admission. |
+
+Unknown commands, unsupported native commands, busy slash input and slash-with-image input
+are rejected, never sent as ordinary model text. This is not full terminal-command parity.
+The hook and native lifecycle are tested on Pi **1.0.1** with isolated no-inference fixtures;
+this is not a compatibility claim for another Pi version or a physical phone.
+
+Pi loads the bridge's TypeScript source entry through its extension loader; the gateway
+still uses the compiled build. This lets native `/reload` load bridge changes instead of
+reusing a compiled JavaScript entry cached by the owning process. The hook captures the
+editor after the remaining synchronous session-start handlers, preserving editor extensions
+such as Pi Vim. A later editor replacement still disables native command admission.
+
+For an existing terminal with the old bridge, activate the update once through native
+terminal `/reload` while Pi is idle and its editor is empty. This retains the process and
+native session. A terminal manager may send that exact command after verifying the owning
+process, idle state and empty editor; it must not clear a draft or retry uncertain delivery.
+After activation, Companion's `/reload` uses the native callback directly, with no terminal
+manager dependency. Restart the known gateway with its existing origin/runtime/auth directory
+and refresh the browser for UI updates. Initial package installation still requires the full
+Pi restart [described below](#1-register-the-bridge-once-then-restart-pi-fully).
+Remembered access does not need a new pairing code.
 
 ## Rename a session
 
@@ -438,8 +503,15 @@ choose the terminal by its name and working-directory group. Session rows show n
 and activity, with a quiet full-row selected highlight. Per-session diagnostic IDs and
 Details disclosures are not shown; action receipts retain their required safety details.
 On narrow touch screens, swipe right from
-within 24px of the left edge to open the same drawer. Code, image and input controls
-keep their gestures; vertical scrolling and multi-touch do not open it.
+within 44px of the left edge, or from the editor's sessions handle, to open the same drawer.
+A small diagonal start remains undecided until movement is clearly horizontal or vertical.
+After the gesture is claimed, the drawer follows horizontal movement and the backdrop
+follows its visible fraction. A 64px swipe still completes opening or closing; short,
+reversed or canceled gestures return to their starting state. The remaining motion uses
+recent swipe speed and distance, bounded to 80–300ms; a pause before release is not a fling.
+Reduced motion keeps direct dragging but removes the settling animation.
+Code, image and input controls keep their gestures; vertical scrolling and multi-touch
+do not open the drawer. Other dialogs retain ownership of their surfaces.
 Send/questionnaire/Stop acquire free control on the deliberate action. A competing
 holder requires a separate takeover click, then another deliberate action. Nothing is
 sent by page loading, selecting a session, takeover, reconnect or lease expiry.
@@ -498,7 +570,7 @@ The original foreground path remains available without personal registration:
 cd /path/to/pi-companion
 COMPANION="$PWD"
 cd /path/to/your-project
-pi --extension "$COMPANION/dist/extension/bridge.js"
+pi --extension "$COMPANION/src/extension/bridge.ts"
 ```
 
 In another terminal, run `npm start` from the companion root. Keep it open, browse to
@@ -545,9 +617,10 @@ Stopped or unmanaged gateways require explicit startup; restart does not guess a
 - Browser refresh restores the session identified by the URL fragment after authentication.
   It does not retain drafts or acquire control. Lock/unlock reconnect does not automatically
   resend input; uncertain originals require deliberate retry.
-- After rebuilding bridge/protocol changes, fully restart the affected Pi terminals and
-  restart the companion gateway when safe. Refreshing the browser alone does not replace
-  code already loaded by those processes.
+- For this bridge update on Pi 1.0.1, save terminal drafts and run `/reload` in each
+  idle owning terminal, then restart the known gateway when safe. This retains each native
+  session. Initial package installation still requires a full Pi restart. Refreshing the
+  browser alone does not replace already-loaded bridge code.
 - Uploaded user images need not have native terminal thumbnails. Missing thumbnails
   alone do not imply lost model delivery; tool-returned images use a separate viewing path.
 

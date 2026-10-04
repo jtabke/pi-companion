@@ -30,6 +30,10 @@ import {
 import { nativeInput } from "./input.js";
 import { collectDisplay } from "./display.js";
 import { observeSubagents } from "./subagents.js";
+import {
+	installNativeCommands,
+	type NativeCommands,
+} from "./native-commands.js";
 export function createBridge(
 	runtime: string,
 	instance = randomBytes(16).toString("hex"),
@@ -38,6 +42,7 @@ export function createBridge(
 	events?: ExtensionAPI["events"],
 	getCommands?: ExtensionAPI["getCommands"],
 	setSessionName?: ExtensionAPI["setSessionName"],
+	installCommands?: typeof installNativeCommands,
 ) {
 	let activeGeneration: string | undefined;
 	let activeSession: string | undefined;
@@ -49,6 +54,7 @@ export function createBridge(
 	const sockets = new Set<import("node:net").Socket>();
 	let input: ReturnType<typeof nativeInput> | undefined;
 	let questions: ReturnType<typeof nativeQuestions> | undefined;
+	let commands: NativeCommands;
 	const statusReads = new Set<AbortController>();
 	async function close() {
 		activeGeneration = activeSession = undefined;
@@ -58,6 +64,8 @@ export function createBridge(
 		questions?.close();
 		questions = undefined;
 		input = undefined;
+		commands?.close();
+		commands = undefined;
 		const old = server;
 		server = undefined;
 		for (const socket of sockets) socket.destroy();
@@ -79,7 +87,7 @@ export function createBridge(
 		registrationPath = socketPath = undefined;
 		recordInode = socketInode = undefined;
 	}
-	async function start(ctx: ExtensionContext) {
+	async function start(ctx: ExtensionContext, generationReason?: "reload") {
 		await close();
 		const generation = randomBytes(16).toString("hex"),
 			capability = randomBytes(32).toString("hex");
@@ -94,6 +102,8 @@ export function createBridge(
 		registrationPath = join(runtime, `b-${instance}.json`);
 		activeGeneration = generation;
 		activeSession = ctx.sessionManager.getSessionId();
+		commands = installCommands?.(ctx);
+		const native = commands;
 		const dispatch = (input = nativeInput(
 			{ instance, generation },
 			ctx,
@@ -102,6 +112,7 @@ export function createBridge(
 			settings,
 			getCommands,
 			setSessionName,
+			native,
 		));
 		const questionOwner = (questions = nativeQuestions(
 			{ instance, generation },
@@ -328,6 +339,8 @@ export function createBridge(
 					capability,
 					getCommands,
 					activeTools,
+					native,
+					generationReason,
 				);
 				if (req.url === "/snapshot") {
 					res
@@ -387,6 +400,11 @@ export function createBridge(
 			await close();
 			throw error;
 		}
+		// Local packages can start before editor extensions. Let the remaining
+		// session-start handlers install their editor before capturing Pi's callback.
+		setImmediate(() => {
+			if (activeGeneration === generation) native?.activate();
+		});
 		return registration;
 	}
 	return {
@@ -428,7 +446,7 @@ export default function bridgeExtension(pi: ExtensionAPI) {
 	};
 	const instance = state[key] ?? (state[key] = randomBytes(16).toString("hex"));
 	let bridge: ReturnType<typeof createBridge> | undefined;
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
 		// RPC can have UI too; only normal terminal sessions publish an owner.
 		if (ctx.mode !== "tui") {
 			await bridge?.close();
@@ -445,8 +463,9 @@ export default function bridgeExtension(pi: ExtensionAPI) {
 			typeof pi.setSessionName === "function"
 				? (name) => pi.setSessionName(name)
 				: undefined,
+			installNativeCommands,
 		);
-		await bridge.start(ctx);
+		await bridge.start(ctx, event.reason === "reload" ? "reload" : undefined);
 	});
 	pi.on("agent_start", (_event, ctx) => bridge?.observe("agent_start", ctx));
 	pi.on("agent_end", (_event, ctx) => bridge?.observe("agent_end", ctx));

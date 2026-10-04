@@ -6,6 +6,7 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { nativeCommands } from "./commands.js";
+import type { NativeCommands } from "./native-commands.js";
 import {
 	limits,
 	type Snapshot,
@@ -105,6 +106,8 @@ export function nativeSnapshot(
 	capability: string,
 	getCommands?: ExtensionAPI["getCommands"],
 	activeTools: ReadonlyMap<string, ToolObservation> = new Map(),
+	native?: NativeCommands,
+	generationReason?: "reload",
 ) {
 	const { project, session, parent, background } = nativeSummary(
 		ctx,
@@ -115,6 +118,7 @@ export function nativeSnapshot(
 	const snapshot: Snapshot = {
 		instance,
 		generation,
+		...(generationReason ? { generationReason } : {}),
 		project,
 		session,
 		parent,
@@ -137,8 +141,9 @@ export function nativeSnapshot(
 			(Number.isFinite(usage.tokens) && usage.tokens >= 0))
 	)
 		snapshot.context = { tokens: usage.tokens, window: usage.contextWindow };
-	const commands = nativeCommands(getCommands);
+	const commands = nativeCommands(getCommands, native?.available());
 	if (commands) snapshot.commands = commands;
+	if (native?.available()) snapshot.commandModels = native.models();
 	const media = new Map<string, ReturnType<typeof inspectImage>>();
 	const entries = ctx.sessionManager.getBranch();
 	const selected = [];

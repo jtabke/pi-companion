@@ -5,7 +5,7 @@
 	"type": "module",
 	"pi": {
 		"extensions": [
-			"./dist/extension/bridge.js"
+			"./src/extension/bridge.ts"
 		]
 	},
 	"engines": {

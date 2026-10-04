@@ -1,16 +1,21 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { commandLimits, type Command } from "../shared/protocol.js";
+import { browserNativeCommands } from "./native-commands.js";
 
 /** A fresh, bounded public catalog. Keep Pi's first match, never source paths. */
 export function nativeCommands(
 	getCommands?: ExtensionAPI["getCommands"],
+	builtin = false,
 ): Command[] | undefined {
-	if (!getCommands) return;
+	if (!getCommands && !builtin) return;
 	try {
-		const commands: Command[] = [],
-			seen = new Set<string>();
-		let bytes = 2;
-		for (const raw of getCommands().slice(0, commandLimits.count)) {
+		const commands: Command[] = builtin ? [...browserNativeCommands] : [],
+			seen = new Set(browserNativeCommands.map((c) => c.name));
+		let bytes = Buffer.byteLength(JSON.stringify(commands));
+		for (const raw of (getCommands?.() ?? []).slice(
+			0,
+			commandLimits.count - commands.length,
+		)) {
 			if (seen.has(raw.name)) continue;
 			seen.add(raw.name);
 			if (

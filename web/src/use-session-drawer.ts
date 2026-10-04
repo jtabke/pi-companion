@@ -6,26 +6,47 @@ export function useSessionDrawer(paired: boolean) {
 	const sidebar = useRef<HTMLDialogElement>(null);
 	const sessionsToggle = useRef<HTMLButtonElement>(null);
 	const sidebarMotion = useRef(0);
-	function openSessions() {
+	function settleSessions(open: boolean, velocity?: number) {
 		const dialog = sidebar.current;
-		if (!dialog || dialog.open) return;
-		sidebarMotion.current++;
-		delete dialog.dataset.closing;
-		dialog.showModal();
-	}
-	function closeSessions() {
-		const dialog = sidebar.current;
-		if (!dialog?.open || dialog.dataset.closing) return;
+		if (
+			!dialog ||
+			(open
+				? dialog.open && !dialog.dataset.dragging
+				: !dialog.open || dialog.dataset.closing)
+		)
+			return;
 		const motion = ++sidebarMotion.current;
-		// Closing during entry starts at the rendered position, without a jump.
-		dialog.style.setProperty(
-			"--session-offset",
-			getComputedStyle(dialog).transform,
-		);
-		dialog.style.setProperty(
-			"--session-shade",
-			getComputedStyle(dialog, "::backdrop").opacity,
-		);
+		if (dialog.open) {
+			// Settle from the rendered position, including interrupted entry or drag.
+			dialog.style.setProperty(
+				"--session-offset",
+				getComputedStyle(dialog).transform,
+			);
+			dialog.style.setProperty(
+				"--session-shade",
+				getComputedStyle(dialog, "::backdrop").opacity,
+			);
+		} else {
+			dialog.style.removeProperty("--session-offset");
+			dialog.style.removeProperty("--session-shade");
+		}
+		if (velocity !== undefined) {
+			const bounds = dialog.getBoundingClientRect();
+			const distance = open ? -bounds.x : bounds.width + bounds.x;
+			const duration = Math.min(
+				300,
+				Math.max(80, distance / Math.max(0.8, Math.abs(velocity))),
+			);
+			dialog.style.setProperty("--session-duration", `${duration}ms`);
+		} else dialog.style.removeProperty("--session-duration");
+		delete dialog.dataset.dragging;
+		dialog.style.removeProperty("--session-drag-x");
+		dialog.style.removeProperty("--session-drag-shade");
+		if (open) {
+			delete dialog.dataset.closing;
+			if (!dialog.open) dialog.showModal();
+			return;
+		}
 		dialog.dataset.closing = "true";
 		const animations = dialog.getAnimations({ subtree: true });
 		const finish = () => {
@@ -33,8 +54,12 @@ export function useSessionDrawer(paired: boolean) {
 				sidebarMotion.current === motion &&
 				sidebar.current === dialog &&
 				dialog.open
-			)
+			) {
 				dialog.close();
+				dialog.style.removeProperty("--session-offset");
+				dialog.style.removeProperty("--session-shade");
+				dialog.style.removeProperty("--session-duration");
+			}
 		};
 		if (!animations.length)
 			finish(); // Reduced motion closes synchronously.
@@ -43,6 +68,12 @@ export function useSessionDrawer(paired: boolean) {
 				finish,
 				finish,
 			);
+	}
+	function openSessions() {
+		settleSessions(true);
+	}
+	function closeSessions() {
+		settleSessions(false);
 	}
 	useEffect(
 		() => () => {
@@ -53,12 +84,22 @@ export function useSessionDrawer(paired: boolean) {
 	useEffect(() => {
 		const node = app.current;
 		if (!paired || !node) return;
+		type Drag = {
+			width: number;
+			origin: number;
+			startX: number;
+			motion: number;
+			lastX: number;
+			lastTime: number;
+			velocity: number;
+		};
 		let swipe:
 			| {
 					x: number;
 					y: number;
+					started: number;
 					identifier: number;
-					horizontal: boolean;
+					drag?: Drag;
 					canceled: boolean;
 					furthest: number;
 					closing: boolean;
@@ -69,8 +110,24 @@ export function useSessionDrawer(paired: boolean) {
 		let compatibilityClick:
 			{ target: Element; until: number; backdrop?: boolean } | undefined;
 		function cancel() {
+			const canceled = swipe;
 			swipe = undefined;
+			if (canceled?.drag?.motion === sidebarMotion.current)
+				settleSessions(canceled.closing, 0);
 			compatibilityClick = undefined;
+		}
+		function placeDrag(drag: Drag, x: number) {
+			const dialog = sidebar.current;
+			if (!dialog || drag.motion !== sidebarMotion.current) return;
+			const offset = Math.max(
+				-drag.width,
+				Math.min(0, drag.origin + x - drag.startX),
+			);
+			dialog.style.setProperty("--session-drag-x", `${offset}px`);
+			dialog.style.setProperty(
+				"--session-drag-shade",
+				`${1 + offset / drag.width}`,
+			);
 		}
 		function start(event: TouchEvent) {
 			cancel(); // A new deliberate touch must never inherit click suppression.
@@ -78,6 +135,8 @@ export function useSessionDrawer(paired: boolean) {
 			const target = event.target instanceof Element ? event.target : undefined;
 			const closing = !!sidebar.current?.open;
 			const control = target?.closest("button, a, summary");
+			const targetDialog = target?.closest("dialog");
+			const composerHandle = !!target?.closest(".composer-drawer-handle");
 			const sessionTarget = control?.matches(
 				".session-card > button:not(.rename-session), .session-details > summary",
 			);
@@ -86,10 +145,12 @@ export function useSessionDrawer(paired: boolean) {
 				(sidebar.current?.open && sidebar.current.dataset.closing) ||
 				event.touches.length !== 1 ||
 				!target ||
-				(control && !(closing && sessionTarget)) ||
-				target.closest(
-					"input, textarea, select, label, [contenteditable]:not([contenteditable=false]), pre, code, table, .image, .composer, .questions",
-				) ||
+				(targetDialog && targetDialog !== sidebar.current) ||
+				(control && !composerHandle && !(closing && sessionTarget)) ||
+				(!composerHandle &&
+					target.closest(
+						"input, textarea, select, label, [contenteditable]:not([contenteditable=false]), pre, code, table, .image, .composer, .questions",
+					)) ||
 				window.getSelection()?.isCollapsed === false
 			)
 				return;
@@ -106,7 +167,8 @@ export function useSessionDrawer(paired: boolean) {
 				)
 					return;
 			} else {
-				if (touch.clientX < 0 || touch.clientX > 24) return;
+				if (!composerHandle && (touch.clientX < 0 || touch.clientX > 44))
+					return;
 				// Leave independently horizontally scrollable content to the browser.
 				for (
 					let content: Element | null = target;
@@ -123,8 +185,8 @@ export function useSessionDrawer(paired: boolean) {
 			swipe = {
 				x: touch.clientX,
 				y: touch.clientY,
+				started: event.timeStamp,
 				identifier: touch.identifier,
-				horizontal: false,
 				canceled: false,
 				furthest: 0,
 				closing,
@@ -144,55 +206,94 @@ export function useSessionDrawer(paired: boolean) {
 			}
 			const dx = (touch.clientX - swipe.x) * (swipe.closing ? -1 : 1),
 				dy = Math.abs(touch.clientY - swipe.y);
-			if (!swipe.horizontal) {
-				if (dx < -12 || (dy > 12 && dx <= dy * 1.5)) {
-					cancel(); // Initial vertical or wrong-way intent cannot be reclaimed.
+			if (!swipe.drag) {
+				if (dx < -12 || (dy > 12 && dy > Math.abs(dx) * 1.5)) {
+					cancel(); // Clear vertical or wrong-way intent cannot be reclaimed.
 					return;
 				}
-				if (dx >= 12 && dx > dy * 1.5) swipe.horizontal = true;
-			}
-			if (swipe.horizontal) {
-				if (!event.cancelable) {
+				if (dx < 12 || dx <= dy * 1.5) return;
+				const dialog = sidebar.current;
+				if (!event.cancelable || !dialog) {
 					cancel();
 					return;
 				}
-				// Keep consuming a claimed gesture even if it no longer completes.
-				// Otherwise a short/reversed swipe can become a row click or scroll.
-				event.preventDefault();
-				swipe.canceled ||=
-					dx < swipe.furthest - 12 || (dy > 12 && dy >= Math.abs(dx));
-				swipe.furthest = Math.max(swipe.furthest, dx);
+				const origin = swipe.closing ? dialog.getBoundingClientRect().x : 0;
+				delete dialog.dataset.closing;
+				dialog.dataset.dragging = "true";
+				dialog.style.setProperty(
+					"--session-drag-x",
+					swipe.closing ? `${origin}px` : "-100%",
+				);
+				dialog.style.setProperty(
+					"--session-drag-shade",
+					swipe.closing ? "1" : "0",
+				);
+				const motion = ++sidebarMotion.current;
+				if (!dialog.open) dialog.showModal();
+				const width = dialog.getBoundingClientRect().width;
+				swipe.drag = {
+					width,
+					origin: swipe.closing ? origin : -width,
+					startX: swipe.x,
+					motion,
+					lastX: swipe.x,
+					lastTime: swipe.started,
+					velocity: 0,
+				};
 			}
+			if (!event.cancelable) {
+				cancel();
+				return;
+			}
+			// Consume claimed movement, including reversal, without turning it into a row click.
+			event.preventDefault();
+			swipe.canceled ||=
+				dx < swipe.furthest - 12 || (dy > 12 && dy >= Math.abs(dx));
+			swipe.furthest = Math.max(swipe.furthest, dx);
+			const drag = swipe.drag;
+			const elapsed = event.timeStamp - drag.lastTime;
+			if (elapsed > 0) drag.velocity = (touch.clientX - drag.lastX) / elapsed;
+			drag.lastX = touch.clientX;
+			drag.lastTime = event.timeStamp;
+			placeDrag(drag, touch.clientX);
 		}
 		function end(event: TouchEvent) {
 			const completed = swipe;
 			swipe = undefined;
+			if (!completed?.drag || completed.drag.motion !== sidebarMotion.current)
+				return;
 			const touch = event.changedTouches[0];
 			if (
-				!completed?.horizontal ||
 				!touch ||
 				touch.identifier !== completed.identifier ||
 				event.touches.length ||
 				window.getSelection()?.isCollapsed === false
-			)
+			) {
+				settleSessions(completed.closing, 0);
 				return;
+			}
 			if (event.cancelable) event.preventDefault();
 			compatibilityClick = {
 				target: completed.target,
 				until: performance.now() + 700,
 			};
-			const dx = (touch.clientX - completed.x) * (completed.closing ? -1 : 1),
-				dy = Math.abs(touch.clientY - completed.y);
-			if (
+			placeDrag(completed.drag, touch.clientX);
+			const dx = (touch.clientX - completed.x) * (completed.closing ? -1 : 1);
+			const dy = Math.abs(touch.clientY - completed.y);
+			const changed =
 				!completed.canceled &&
 				dx >= completed.furthest - 12 &&
 				dx >= 64 &&
-				dx > dy &&
-				!!sidebar.current?.open === completed.closing
-			) {
-				if (completed.closing) closeSessions();
-				else openSessions();
-			}
+				dx > dy;
+			// A pause before release is not a fling. Speed only controls remaining motion.
+			const velocity =
+				event.timeStamp - completed.drag.lastTime <= 100
+					? completed.drag.velocity
+					: 0;
+			settleSessions(
+				changed ? !completed.closing : completed.closing,
+				velocity,
+			);
 		}
 		function click(event: MouseEvent) {
 			const guard = compatibilityClick;

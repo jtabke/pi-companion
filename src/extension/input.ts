@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { nativeCommands } from "./commands.js";
+import type { NativeCommands } from "./native-commands.js";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -23,6 +24,7 @@ export function nativeInput(
 	settings?: ExtensionAPI["getSettings"],
 	getCommands?: ExtensionAPI["getCommands"],
 	setSessionName?: ExtensionAPI["setSessionName"],
+	native?: NativeCommands,
 ) {
 	const ledger = new Map<
 		string,
@@ -163,10 +165,12 @@ export function nativeInput(
 		// Pi parses the token at a literal space; never normalize authored arguments.
 		const command =
 			slash && "text" in request && textRequest!.text.startsWith("/")
-				? nativeCommands(getCommands)?.find(
+				? nativeCommands(getCommands, native?.available())?.find(
 						(c) => c.name === textRequest!.text.slice(1).split(" ", 1)[0],
 					)
 				: undefined;
+		const builtin = command?.source === "builtin";
+		const nativeText = builtin ? textRequest!.text.trim() : "";
 		const slashUnsupported =
 			slash &&
 			(image ||
@@ -174,7 +178,8 @@ export function nativeInput(
 				!ctx.isIdle() ||
 				ctx.hasPendingMessages() ||
 				!command ||
-				command.source === "extension");
+				command.source === "extension" ||
+				(builtin && !native?.accepts(nativeText)));
 		// First matching guard wins. Rejections enter the same ledger as attempts.
 		let reason: Receipt["reason"] | undefined;
 		if (renaming) {
@@ -186,7 +191,8 @@ export function nativeInput(
 			else if (ctx.isIdle() && !ctx.hasPendingMessages()) reason = "idle";
 		} else if (slashUnsupported) reason = "slash-unsupported";
 		else if (!image && !textRequest!.text.trim()) reason = "invalid";
-		else if (!send) reason = "unavailable";
+		else if (builtin) reason = native?.blocked();
+		else if (!builtin && !send) reason = "unavailable";
 		else if (
 			(image || !textRequest!.deliverAs) &&
 			(!ctx.isIdle() || ctx.hasPendingMessages())
@@ -213,6 +219,7 @@ export function nativeInput(
 		try {
 			if (renaming) setSessionName!(request.name);
 			else if (stopping) ctx.abort();
+			else if (builtin) native!.submit(nativeText);
 			else
 				send!(
 					image

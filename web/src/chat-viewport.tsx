@@ -308,6 +308,15 @@ export function ChatViewport({
 				<button
 					className="jump-latest"
 					aria-label="Jump to latest"
+					onMouseDown={(event) => {
+						// Keep editing focus until native click. Keyboard closure would
+						// move this button before release, losing the user's tap.
+						if (
+							event.button === 0 &&
+							document.activeElement instanceof HTMLTextAreaElement
+						)
+							event.preventDefault();
+					}}
 					onClick={latest}
 				>
 					<svg

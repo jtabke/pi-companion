@@ -90,7 +90,16 @@ for (const width of [320, 390, 900])
 					offsetTop: 0,
 					scale: 1,
 				});
-				Object.defineProperty(viewport, "height", { get: () => innerHeight });
+				let keyboardHeight: number | undefined;
+				Object.defineProperty(viewport, "height", {
+					get: () => keyboardHeight ?? innerHeight,
+				});
+				Object.defineProperty(window, "setReadingKeyboardHeight", {
+					value: (height: number) => {
+						keyboardHeight = height;
+						viewport.dispatchEvent(new Event("resize"));
+					},
+				});
 				window.addEventListener("resize", () =>
 					viewport.dispatchEvent(new Event("resize")),
 				);
@@ -181,7 +190,36 @@ for (const width of [320, 390, 900])
 			0,
 		);
 		await checkComposer(844);
-		await jump.click();
+		if (width === 320) {
+			const draft = page.getByPlaceholder("Message Pi");
+			await draft.fill("Keep this local draft");
+			await draft.evaluate((node) => {
+				const set = (
+					window as unknown as { setReadingKeyboardHeight: (h: number) => void }
+				).setReadingKeyboardHeight;
+				node.addEventListener("blur", () => set(844), { once: true });
+				set(300);
+			});
+			await expect
+				.poll(async () => (await page.locator("main").boundingBox())!.height)
+				.toBe(300);
+			await expect(jump).toBeVisible();
+			const box = (await jump.boundingBox())!;
+			// Release at the original press point, as a finger does. Editor blur
+			// closes the fixture keyboard and would otherwise move Jump before click.
+			await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+			await page.mouse.down();
+			await page.evaluate(() => new Promise(requestAnimationFrame));
+			await page.mouse.up();
+			await expect.poll(distance).toBeLessThanOrEqual(1);
+			await expect(draft).toBeFocused();
+			await expect(draft).toHaveValue("Keep this local draft");
+			await expect(jump).toBeHidden();
+			await draft.blur();
+			await expect
+				.poll(async () => (await page.locator("main").boundingBox())!.height)
+				.toBe(844);
+		} else await jump.click();
 		await expect.poll(distance).toBeLessThanOrEqual(1);
 		await append("New message while following latest");
 		await expect.poll(distance).toBeLessThanOrEqual(1);

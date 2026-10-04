@@ -7,6 +7,7 @@ import {
 	rmSync,
 } from "node:fs";
 import { createBridge } from "../dist/extension/bridge.js";
+import { installNativeCommands } from "../dist/extension/native-commands.js";
 import { createGateway } from "../dist/gateway/server.js";
 import { createServer } from "node:net";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -123,6 +124,18 @@ let primaryName = "Browser test",
 	secondaryName = "Browser other",
 	otherRenames = 0,
 	otherRenameCapable = false;
+let nativeEnabled = false,
+	terminalDraft = "";
+const nativeRequests = [];
+const commandModels = [
+	{ provider: "fixture", id: "first", name: "Fixture first" },
+	{ provider: "fixture", id: "second", name: "Fixture second" },
+	...Array.from({ length: 18 }, (_, index) => ({
+		provider: "fixture",
+		id: `extra-${index + 3}`,
+		name: `Fixture model ${index + 3}`,
+	})),
+];
 const bridge = createBridge(
 	runtime,
 	undefined,
@@ -164,6 +177,7 @@ const bridge = createBridge(
 		if (!ignoreRename) primaryName = name;
 		else throw Error("after public rename attempt");
 	},
+	(ctx) => (nativeEnabled ? installNativeCommands(ctx) : undefined),
 );
 const entries = [
 	{
@@ -214,6 +228,22 @@ primary.sessionManager.getSessionName = () => primaryName;
 secondary.sessionManager.getSessionName = () => secondaryName;
 primary.isIdle = () => !working;
 primary.hasPendingMessages = () => pending;
+let editorFactory = () => ({
+	onSubmit: (text) => {
+		nativeRequests.push(text);
+	},
+});
+primary.ui = {
+	getEditorComponent: () => editorFactory,
+	setEditorComponent: (factory) => {
+		editorFactory = factory;
+		factory({}, {}, {}).onSubmit = (text) => {
+			nativeRequests.push(text);
+		};
+	},
+	getEditorText: () => terminalDraft,
+};
+primary.modelRegistry = { getAvailable: () => commandModels };
 primary.abort = () => {
 	aborts++;
 	if (throwAbort) throw Error("after public attempt");
@@ -297,7 +327,7 @@ async function startGateway() {
 			questionMode = action;
 		if (action === "reload") {
 			question = undefined;
-			await waitPublishedGeneration(await bridge.start(primary), req);
+			await waitPublishedGeneration(await bridge.start(primary, "reload"), req);
 		}
 		return { question, replies };
 	});
@@ -362,7 +392,25 @@ async function startGateway() {
 		secondaryName,
 		aborts,
 		lastText,
+		nativeRequests,
 	}));
+	app.post("/api/fixture/native-state", async (req) => {
+		if (req.body.action === "draft") {
+			terminalDraft = req.body.text;
+			return { ok: true };
+		}
+		nativeEnabled = req.body.action === "enable";
+		terminalDraft = "";
+		nativeRequests.length = 0;
+		working = pending = false;
+		editorFactory = () => ({
+			onSubmit: (text) => {
+				nativeRequests.push(text);
+			},
+		});
+		await waitPublishedGeneration(await bridge.start(primary), req);
+		return { ok: true };
+	});
 	app.post("/api/fixture/stop-state", async (req) => {
 		const action = req.body.action;
 		if (action === "reset") {

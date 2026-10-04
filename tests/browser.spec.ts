@@ -2254,10 +2254,76 @@ test.describe("I3 slash composer", () => {
 			await expect(page.getByRole("listbox")).toHaveCount(0);
 			expect(requests).toEqual([]); // Selection never submits or claims control.
 			await draft.fill("/");
-			await expect(page.getByRole("option")).toHaveCount(4);
+			await expect(page.getByRole("option")).toHaveCount(3);
+			await expect(page.locator("#composer-availability")).toHaveClass(
+				"visually-hidden",
+			);
+			await expect(page.locator("#composer-availability")).toBeEmpty();
+			for (const height of [844, 300]) {
+				await page.setViewportSize({ width, height });
+				await page.waitForFunction(
+					() =>
+						Math.abs(
+							document.querySelector("main")!.getBoundingClientRect().height -
+								window.visualViewport!.height,
+						) < 1,
+				);
+				const popup = page.getByRole("listbox", {
+					name: "Selected Pi slash commands",
+				});
+				await popup.evaluate((node) => {
+					node.scrollTop = 0;
+				});
+				const listStyle = await popup.evaluate((node) => {
+					const selected = node.querySelector('[aria-selected="true"]')!;
+					const row = getComputedStyle(selected);
+					return {
+						background: row.backgroundColor,
+						canvas: getComputedStyle(node).backgroundColor,
+						border: row.borderTopWidth,
+						radius: getComputedStyle(node).borderTopLeftRadius,
+						descriptionLines:
+							selected.querySelector("span")!.getBoundingClientRect().height /
+							parseFloat(
+								getComputedStyle(selected.querySelector("span")!).lineHeight,
+							),
+					};
+				});
+				expect(listStyle.background).not.toBe(listStyle.canvas);
+				expect(listStyle.border).toBe("0px");
+				expect(parseFloat(listStyle.radius)).toBeGreaterThan(0);
+				expect(listStyle.descriptionLines).toBeCloseTo(1, 1);
+				await expect(popup.locator("small")).toHaveCount(0);
+				const popupBox = (await popup.boundingBox())!;
+				const editorBox = (await draft.boundingBox())!;
+				expect(popupBox.y).toBeGreaterThanOrEqual(0);
+				expect(popupBox.y + popupBox.height).toBeLessThanOrEqual(editorBox.y);
+				await expect
+					.poll(() =>
+						page
+							.getByRole("option")
+							.first()
+							.evaluate((node) => {
+								const box = node.getBoundingClientRect();
+								return node.contains(
+									document.elementFromPoint(
+										box.x + box.width / 2,
+										box.y + Math.min(22, box.height / 2),
+									),
+								);
+							}),
+					)
+					.toBe(true);
+			}
+			await page.getByRole("option").first().tap();
+			await expect(draft).toHaveValue("/review ");
+			await expect(draft).toBeFocused();
+			expect(requests).toEqual([]);
+			await draft.fill("/");
+			await page.setViewportSize({ width, height: 844 });
 			await expect(
 				page.getByRole("option", { name: /\/terminal/ }),
-			).toContainText("Extension · terminal only / browser unverified");
+			).toHaveCount(0);
 			await draft.press("Escape");
 			await expect(page.getByRole("listbox")).toHaveCount(0);
 			await draft.fill("/skill:");
@@ -2346,6 +2412,8 @@ test.describe("I3 slash composer", () => {
 		).dispatches;
 		for (const text of [
 			"/unknown",
+			"/new",
+			"/reload",
 			"/model",
 			"/terminal",
 			" /review",
@@ -2355,15 +2423,26 @@ test.describe("I3 slash composer", () => {
 			await expect(
 				page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 			).toBeDisabled();
+			if (["/new", "/reload", "/model"].includes(text)) {
+				await expect(
+					page
+						.locator(".composer")
+						.getByText("Command not available in this Pi session.", {
+							exact: true,
+						}),
+				).toBeVisible();
+				await draft.press("Escape");
+				await draft.press("Enter");
+			}
 		}
+		expect(controls).toEqual([]);
+		expect(inputs).toEqual([]);
 		await draft.fill("/review args");
 		await page
 			.getByLabel("Images for selected Pi (local picker)")
 			.setInputFiles({ name: "slash.png", mimeType: "image/png", buffer: png });
 		await expect(
-			page
-				.locator(".composer")
-				.getByText(/Slash commands with images are unsupported/),
+			page.locator(".composer").getByText(/Remove images to use a command/),
 		).toBeVisible();
 		await expect(
 			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
@@ -2385,7 +2464,7 @@ test.describe("I3 slash composer", () => {
 		await expect(
 			page
 				.locator(".composer")
-				.getByText(/Busy slash commands are unsupported/),
+				.getByText(/Commands are available when Pi is idle/),
 		).toBeVisible();
 		await draft.press("Escape");
 		await draft.press("Enter");
@@ -2399,7 +2478,9 @@ test.describe("I3 slash composer", () => {
 		await draft.fill("/review other");
 		await expect(page.getByRole("listbox")).toHaveCount(0);
 		await expect(
-			page.locator(".composer").getByText(/Slash discovery unavailable/),
+			page
+				.locator(".composer")
+				.getByText(/Commands unavailable\. Reload the bridge in Pi/),
 		).toBeVisible();
 		await expect(
 			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
@@ -2476,6 +2557,294 @@ test.describe("I3 slash composer", () => {
 		expect(controls.filter((action) => action === "claim")).toHaveLength(1);
 		await state("reset");
 		questionCookies = await context.cookies();
+	});
+});
+
+test.describe("Native slash browser controls", () => {
+	test.use({ hasTouch: true });
+	test.afterEach(async ({ context }) => {
+		await context.request.post("/api/fixture/native-state", {
+			data: { action: "disable" },
+		});
+	});
+	test("native model picker edits only the draft, then Send uses control and native dispatch at phone widths", async ({
+		page,
+		context,
+	}) => {
+		await pairQuestionnaire(page, context);
+		await context.request.post("/api/fixture/native-state", {
+			data: { action: "enable" },
+		});
+		const list = await (await context.request.get("/api/snapshot")).json();
+		const owner = list.sessions.find(
+			(s: { session: string }) => s.session === "Browser test",
+		);
+		await chooseSession(page, owner.instance);
+		const draft = page.getByLabel("Text for selected Pi (local draft)");
+		const mutations: string[] = [];
+		page.on("request", (req) => {
+			if (
+				/\/api\/(control|text|image)$/.test(req.url()) &&
+				!(
+					req.url().endsWith("/api/control") &&
+					req.postDataJSON().action === "release"
+				)
+			)
+				mutations.push(req.url());
+		});
+		for (const width of [320, 390]) {
+			await page.setViewportSize({ width, height: 844 });
+			await draft.fill("/mo");
+			const suggestion = page.getByRole("option", { name: /\/model/ });
+			await expect(suggestion).toContainText("Choose a model in the browser");
+			await expect(suggestion.locator("small")).toHaveCount(0);
+			await expect(page.locator("#composer-availability")).toHaveClass(
+				"visually-hidden",
+			);
+			await expect(page.locator("#composer-availability")).toBeEmpty();
+			const popup = (await page.getByRole("listbox").boundingBox())!;
+			const input = (await draft.boundingBox())!;
+			expect(popup.y + popup.height).toBeLessThanOrEqual(input.y);
+			expect((await suggestion.boundingBox())!.height).toBeGreaterThanOrEqual(
+				44,
+			);
+			if (width === 320) await draft.press("Enter");
+			else await suggestion.tap();
+			const dialog = page.getByRole("dialog", { name: "Choose Pi model" });
+			await expect(dialog).toBeVisible();
+			await expect(dialog.getByRole("radio")).toHaveCount(20);
+			expect(mutations).toEqual([]);
+			const second = dialog.getByRole("radio", { name: /fixture\/second/ });
+			await dialog.getByRole("radio").first().focus();
+			await dialog.getByRole("radio").first().press("ArrowDown");
+			await expect(second).toBeChecked();
+			await expect(second).toBeFocused();
+			const secondRow = dialog.locator(".model-option").filter({
+				has: page.getByRole("radio", { name: /fixture\/second/ }),
+			});
+			// The browser decides when radio focus needs a visible indicator.
+			const visibleFocus = await second.evaluate((node) =>
+				node.matches(":focus-visible"),
+			);
+			await expect(secondRow).toHaveCSS(
+				"outline-style",
+				visibleFocus ? "solid" : "none",
+			);
+			await expect(secondRow.locator("svg")).toBeVisible();
+			await expect(
+				dialog.locator(".model-option").first().locator("svg"),
+			).toBeHidden();
+			for (const height of [844, 300]) {
+				await page.setViewportSize({ width, height });
+				await page.waitForFunction(
+					() =>
+						Math.abs(
+							document.querySelector("main")!.getBoundingClientRect().height -
+								window.visualViewport!.height,
+						) < 1,
+				);
+				const box = (await dialog.boundingBox())!;
+				expect(box.x).toBeGreaterThanOrEqual(0);
+				expect(box.x + box.width).toBeLessThanOrEqual(width);
+				expect(box.y).toBeGreaterThanOrEqual(0);
+				expect(box.y + box.height).toBeLessThanOrEqual(height);
+				await expect(
+					dialog.getByRole("button", { name: "Cancel" }),
+				).toBeInViewport();
+				await expect(
+					dialog.getByRole("button", { name: "Use model" }),
+				).toBeInViewport();
+			}
+			const models = dialog.getByRole("radiogroup", {
+				name: "Available models",
+			});
+			expect(
+				await models.evaluate((node) => node.scrollHeight > node.clientHeight),
+			).toBe(true);
+			const last = dialog.getByRole("radio", { name: /fixture\/extra-20/ });
+			const row = dialog.locator(".model-option").filter({
+				has: page.getByRole("radio", { name: /fixture\/extra-20/ }),
+			});
+			await row.scrollIntoViewIfNeeded();
+			expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+			await row.tap();
+			await expect(last).toBeChecked();
+			await expect(
+				dialog.getByRole("button", { name: "Use model" }),
+			).toBeInViewport();
+			await secondRow.scrollIntoViewIfNeeded();
+			await secondRow.tap();
+			await expect(second).toBeChecked();
+			await expect(row.locator("svg")).toBeHidden();
+			await dialog.getByRole("button", { name: "Use model" }).tap();
+			await expect(dialog).toBeHidden();
+			await expect(draft).toHaveValue("/model fixture/second");
+			expect(mutations).toEqual([]);
+		}
+		await page.setViewportSize({ width: 390, height: 844 });
+		await page.getByRole("button", { name: "Send", exact: true }).tap();
+		await expect(draft).toHaveValue("");
+		await expect
+			.poll(
+				async () =>
+					(await (await context.request.get("/api/fixture/dispatches")).json())
+						.nativeRequests,
+			)
+			.toEqual(["/model fixture/second"]);
+		expect(
+			mutations.filter((url) => url.endsWith("/api/control")),
+		).toHaveLength(1);
+		expect(mutations.filter((url) => url.endsWith("/api/text"))).toHaveLength(
+			1,
+		);
+		const observed = await (
+			await context.request.get("/api/fixture/dispatches")
+		).json();
+		const modelRequests = observed.nativeRequests.length;
+		await context.request.post("/api/fixture/native-state", {
+			data: { action: "draft", text: "terminal draft" },
+		});
+		await draft.fill("/new");
+		await draft.press("Escape");
+		await page.getByRole("button", { name: "Send", exact: true }).tap();
+		await expect(
+			page.getByText(/Clear or send the unsent draft in the Pi terminal first/),
+		).toBeVisible();
+		await expect(draft).toHaveValue("/new");
+		expect(
+			(await (await context.request.get("/api/fixture/dispatches")).json())
+				.nativeRequests,
+		).toHaveLength(modelRequests);
+	});
+	test("reload feedback requires a native reload observation, expires, and does not replay on refresh or other generation changes", async ({
+		page,
+		context,
+	}) => {
+		await pairQuestionnaire(page, context);
+		await context.request.post("/api/fixture/native-state", {
+			data: { action: "enable" },
+		});
+		const list = await (await context.request.get("/api/snapshot")).json();
+		const owner = list.sessions.find(
+			(s: { session: string }) => s.session === "Browser test",
+		);
+		await chooseSession(page, owner.instance);
+		const draft = page.getByLabel("Text for selected Pi (local draft)");
+		const feedback = page
+			.locator(".composer")
+			.getByText("Pi reloaded", { exact: true });
+		const attempts: string[] = [];
+		page.on("request", (req) => {
+			if (req.url().endsWith("/api/text"))
+				attempts.push(req.postDataJSON().text);
+		});
+		await draft.fill("/reload");
+		await draft.press("Escape");
+		await page.getByRole("button", { name: "Send", exact: true }).click();
+		await expect(draft).toHaveValue("");
+		await expect(feedback).toHaveCount(0); // Dispatch is not completion.
+		await context.request.post("/api/fixture/question", {
+			data: { action: "reload" },
+		});
+		await expect(feedback).toBeVisible();
+		await expect(feedback).toHaveAttribute("role", "status");
+		await expect(feedback).toHaveCount(0, { timeout: 7000 });
+		await page.reload();
+		await expect(
+			page.locator("header").getByText("Pi idle", { exact: true }),
+		).toBeVisible();
+		await expect(feedback).toHaveCount(0); // Existing reload metadata is not a new event.
+		const beforeReset = new URL(page.url()).hash;
+		await context.request.post("/api/fixture/stop-state", {
+			data: { action: "reset" },
+		});
+		await expect.poll(() => new URL(page.url()).hash).not.toBe(beforeReset);
+		await expect(feedback).toHaveCount(0);
+		await context.request.post("/api/fixture/question", {
+			data: { action: "reload" },
+		});
+		await expect(feedback).toBeVisible(); // A terminal-initiated reload also gives feedback.
+		const other = list.sessions.find(
+			(s: { session: string }) => s.session === "Browser other",
+		);
+		await chooseSession(page, other.instance);
+		await expect(feedback).toHaveCount(0);
+		await chooseSession(page, owner.instance);
+		await expect(feedback).toHaveCount(0);
+		expect(attempts).toEqual(["/reload"]);
+	});
+	test("uncertain native reload is never retried across generation recovery; dismiss sends nothing and picker cancels on replacement", async ({
+		page,
+		context,
+	}) => {
+		await pairQuestionnaire(page, context);
+		await context.request.post("/api/fixture/native-state", {
+			data: { action: "enable" },
+		});
+		const list = await (await context.request.get("/api/snapshot")).json();
+		const owner = list.sessions.find(
+			(s: { session: string }) => s.session === "Browser test",
+		);
+		await chooseSession(page, owner.instance);
+		const draft = page.getByLabel("Text for selected Pi (local draft)");
+		const attempts: string[] = [],
+			claims: string[] = [];
+		page.on("request", (req) => {
+			if (req.url().endsWith("/api/text"))
+				attempts.push(req.postDataJSON().text);
+			if (
+				req.url().endsWith("/api/control") &&
+				req.postDataJSON().action === "claim"
+			)
+				claims.push(req.url());
+		});
+		await page.route(
+			"**/api/text",
+			async (route) => {
+				await route.fetch();
+				await route.abort("failed");
+			},
+			{ times: 1 },
+		);
+		await draft.fill("/reload");
+		await draft.press("Escape");
+		await page.getByRole("button", { name: "Send", exact: true }).click();
+		const dismiss = page.getByRole("button", {
+			name: "Dismiss command receipt without retrying",
+		});
+		await expect(dismiss).toBeEnabled();
+		await expect(
+			page.getByRole("button", { name: "Retry same outstanding input" }),
+		).toHaveCount(0);
+		await context.request.post("/api/fixture/question", {
+			data: { action: "reload" },
+		});
+		await expect
+			.poll(() =>
+				new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"),
+			)
+			.not.toBe(`${owner.instance}:${owner.generation}`);
+		await expect(dismiss).toBeEnabled();
+		await dismiss.click();
+		expect(attempts).toEqual(["/reload"]);
+		expect(claims).toHaveLength(1);
+		await draft.fill("/model");
+		await draft.press("Escape");
+		await page.getByRole("button", { name: "Send", exact: true }).click();
+		const dialog = page.getByRole("dialog", { name: "Choose Pi model" });
+		await expect(dialog).toBeVisible();
+		await context.request.post("/api/fixture/question", {
+			data: { action: "reload" },
+		});
+		await expect(dialog).toBeHidden();
+		expect(attempts).toEqual(["/reload"]);
+		expect(claims).toHaveLength(1);
+		await page.reload();
+		await expect(
+			page.locator("header").getByText("Pi idle", { exact: true }),
+		).toBeVisible();
+		expect(attempts).toEqual(["/reload"]);
+		expect(claims).toHaveLength(1);
 	});
 });
 

@@ -79,6 +79,7 @@ const CommandSchema = Type.Object(
 		}),
 		description: Type.String({ maxLength: commandLimits.description }),
 		source: Type.Union([
+			Type.Literal("builtin"),
 			Type.Literal("extension"),
 			Type.Literal("prompt"),
 			Type.Literal("skill"),
@@ -87,10 +88,23 @@ const CommandSchema = Type.Object(
 	{ additionalProperties: false },
 );
 export type Command = Static<typeof CommandSchema>;
+const CommandModelSchema = Type.Object(
+	{
+		reference: Type.String({
+			minLength: 1,
+			maxLength: 256,
+			pattern: "^[^\\s\\u0000-\\u001f\\u007f]+$",
+		}),
+		name: Type.String({ maxLength: 120 }),
+	},
+	{ additionalProperties: false },
+);
+export type CommandModel = Static<typeof CommandModelSchema>;
 export const SnapshotSchema = Type.Object(
 	{
 		instance: id,
 		generation: id,
+		generationReason: Type.Optional(Type.Literal("reload")),
 		project: Type.String({ maxLength: 120 }),
 		session: Type.String({ maxLength: 120 }),
 		parent: Type.Union([Type.Literal("working"), Type.Literal("idle")]),
@@ -105,6 +119,9 @@ export const SnapshotSchema = Type.Object(
 		),
 		commands: Type.Optional(
 			Type.Array(CommandSchema, { maxItems: commandLimits.count }),
+		),
+		commandModels: Type.Optional(
+			Type.Array(CommandModelSchema, { maxItems: commandLimits.count }),
 		),
 		// Distinguishes an omitted history window from an individual unavailable block.
 		omittedItems: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -381,6 +398,7 @@ export const ReceiptSchema = Type.Object(
 			Type.Literal("images-blocked"),
 			Type.Literal("image-policy-unknown"),
 			Type.Literal("slash-unsupported"),
+			Type.Literal("terminal-draft"),
 		]),
 	},
 	{ additionalProperties: false },

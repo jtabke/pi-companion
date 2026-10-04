@@ -359,6 +359,12 @@ for (const width of [320, 390, 900])
 					editor: (await draft.boundingBox())!,
 					picker: (await picker.boundingBox())!,
 					send: (await send.boundingBox())!,
+					handle: await bar.locator(".composer-drawer-handle").boundingBox(),
+					textLeft: await draft.evaluate(
+						(node) =>
+							node.getBoundingClientRect().x +
+							parseFloat(getComputedStyle(node).paddingLeft),
+					),
 					reader: (await history.boundingBox())!,
 				};
 				states.push({ state, ...boxes });
@@ -408,7 +414,16 @@ for (const width of [320, 390, 900])
 						boxes.picker.y + boxes.picker.height,
 					);
 				}
-				expect(boxes.picker.x - boxes.bar.x).toBe(5);
+				expect(boxes.picker.x - boxes.bar.x).toBe(
+					width < 640 && !stacked ? 53 : 5,
+				);
+				if (width < 640) {
+					expect(boxes.handle).not.toBeNull();
+					expect(boxes.handle!.x - boxes.bar.x).toBe(5);
+					expect(boxes.textLeft).toBeGreaterThanOrEqual(
+						boxes.handle!.x + boxes.handle!.width + 4,
+					);
+				} else expect(boxes.handle).toBeNull();
 				expect(
 					boxes.bar.x + boxes.bar.width - boxes.send.x - boxes.send.width,
 				).toBe(5);
@@ -417,7 +432,11 @@ for (const width of [320, 390, 900])
 				expect(boxes.bar.y + boxes.bar.height).toBe(
 					states[0].bar.y + states[0].bar.height,
 				);
-				for (const control of [boxes.picker, boxes.send]) {
+				for (const control of [
+					boxes.picker,
+					boxes.send,
+					...(boxes.handle ? [boxes.handle] : []),
+				]) {
 					expect(control.width).toBeGreaterThanOrEqual(44);
 					expect(control.height).toBeGreaterThanOrEqual(44);
 					expect(control.y + control.height).toBeLessThanOrEqual(
@@ -1510,16 +1529,30 @@ for (const width of [320, 390, 900])
 			(node) => node.scrollTop,
 		);
 		const selectionBeforeSwipe = new URL(page.url()).hash;
-		await swipe("main", [
-			[8, 180],
-			[40, 182],
-			[100, 212],
-		]);
-		if (width < 640) {
-			await expect(sidebar).toBeVisible();
-			await page.keyboard.press("Escape");
-			await expect(menu).toBeFocused();
-		} else await expect(sidebar).toBeHidden();
+		for (const points of [
+			[
+				[8, 180],
+				[40, 182],
+				[100, 212],
+			],
+			[
+				[32, 180],
+				[70, 182],
+				[124, 184],
+			], // Start inside a usable edge target.
+			[
+				[8, 180],
+				[28, 194],
+				[100, 198],
+			], // Small diagonal start, then clearly horizontal.
+		] as [number, number][][]) {
+			await swipe("main", points);
+			if (width < 640) {
+				await expect(sidebar).toBeVisible();
+				await page.keyboard.press("Escape");
+				await expect(menu).toBeFocused();
+			} else await expect(sidebar).toBeHidden();
+		}
 		expect(await history.evaluate((node) => node.scrollTop)).toBe(
 			positionBeforeSwipe,
 		);
@@ -1856,7 +1889,8 @@ for (const width of [320, 390, 900])
 		}
 		const closingGesture = await swipe(".session-sidebar", [
 			[180, 100],
-			[90, 104],
+			[160, 114],
+			[90, 118],
 		]);
 		if (width < 640) {
 			expect(closingGesture).toContain(true);
@@ -3083,14 +3117,117 @@ for (const reducedMotion of ["no-preference", "reduce"] as const)
 					event.target instanceof Node &&
 					(event.target === dialog ||
 						(!dialog.contains(event.target) &&
-							!node.querySelector("header button")!.contains(event.target)))
+							!node.querySelector("header button")!.contains(event.target) &&
+							!node
+								.querySelector(".composer-drawer-handle")!
+								.contains(event.target)))
 				)
 					node.dataset.backdropClicks = String(
 						Number(node.dataset.backdropClicks) + 1,
 					);
 			});
 		});
-		await menu.click();
+		const handle = page.getByRole("button", {
+			name: "Open sessions from editor",
+		});
+		await expect(handle).toBeVisible();
+		const handleBox = (await handle.boundingBox())!;
+		expect(handleBox.width).toBeGreaterThanOrEqual(44);
+		expect(handleBox.height).toBeGreaterThanOrEqual(44);
+		const textLeft = await page
+			.getByPlaceholder("Message Pi")
+			.evaluate(
+				(node) =>
+					node.getBoundingClientRect().x +
+					parseFloat(getComputedStyle(node).paddingLeft),
+			);
+		expect(textLeft).toBeGreaterThanOrEqual(handleBox.x + handleBox.width + 4);
+		const hx = handleBox.x + handleBox.width / 2,
+			hy = handleBox.y + handleBox.height / 2;
+		async function drag(
+			type: string,
+			x: number,
+			time: number,
+			target = handle,
+			y = hy,
+		) {
+			await target.evaluate(
+				(node, { type, x, y, time }) => {
+					const event = new TouchEvent(type, {
+						bubbles: true,
+						cancelable: true,
+					});
+					const touch = { identifier: 1, clientX: x, clientY: y };
+					Object.defineProperties(event, {
+						touches: {
+							value:
+								type === "touchend" || type === "touchcancel" ? [] : [touch],
+						},
+						changedTouches: { value: [touch] },
+						timeStamp: { value: time },
+					});
+					node.dispatchEvent(event);
+				},
+				{ type, x, y, time },
+			);
+		}
+		const durations: number[] = [];
+		for (const step of [100, 10]) {
+			await page.getByPlaceholder("Message Pi").focus();
+			await drag("touchstart", hx, 1000);
+			await drag("touchmove", hx + 40, 1000 + step);
+			await expect(sidebar).toHaveAttribute("data-dragging", "true");
+			await drag("touchmove", hx + 90, 1000 + step * 2);
+			const position = await sidebar.evaluate((node) => ({
+				x: node.getBoundingClientRect().x,
+				width: node.getBoundingClientRect().width,
+				shade: Number(getComputedStyle(node, "::backdrop").opacity),
+				modal: node.matches(":modal"),
+				animations: node.getAnimations({ subtree: true }).length,
+			}));
+			expect(position.x).toBeCloseTo(-position.width + 90, 0);
+			expect(position.shade).toBeCloseTo(90 / position.width, 2);
+			expect(position.modal).toBe(true);
+			expect(position.animations).toBe(0);
+			await drag("touchend", hx + 90, 1001 + step * 2);
+			if (reducedMotion === "no-preference") {
+				durations.push(
+					await sidebar.evaluate((node) =>
+						Number(node.getAnimations()[0].effect!.getTiming().duration),
+					),
+				);
+				const released = await sample(0);
+				expect(released.x).toBeCloseTo(position.x, 0);
+				expect(released.shade).toBeCloseTo(position.shade, 2);
+			}
+			await finish();
+			expect((await sidebar.boundingBox())!.x).toBe(0);
+			await drag("touchstart", 180, 2000, sidebar, 100);
+			await drag("touchmove", 140, 2100, sidebar, 100);
+			expect((await sidebar.boundingBox())!.x).toBeCloseTo(-40, 0);
+			expect(
+				await sidebar.evaluate((node) =>
+					Number(getComputedStyle(node, "::backdrop").opacity),
+				),
+			).toBeCloseTo(1 - 40 / position.width, 2);
+			await drag("touchcancel", 140, 2110, sidebar, 100);
+			await finish();
+			expect((await sidebar.boundingBox())!.x).toBe(0);
+			await page.keyboard.press("Escape");
+			await expect(sidebar).toBeHidden();
+		}
+		if (reducedMotion === "no-preference")
+			expect(durations[1]).toBeLessThan(durations[0]);
+		// A canceled drag returns to closed, without clearing or sending the draft.
+		await drag("touchstart", hx, 1000);
+		await drag("touchmove", hx + 50, 1100);
+		await drag("touchcancel", hx + 50, 1110);
+		await finish();
+		await expect(sidebar).toBeHidden();
+		await expect(page.getByPlaceholder("Message Pi")).toHaveValue(
+			"Unsent local draft",
+		);
+		await handle.click(); // The dedicated edge is also an ordinary keyboard/tap button.
 		await finish();
 		// Native dialog backdrop events target the dialog, so coordinates own dismissal.
 		for (const sequence of [
@@ -3141,6 +3278,28 @@ for (const reducedMotion of ["no-preference", "reduce"] as const)
 		if (testInfo.project.name === "chromium") {
 			const input = await page.context().newCDPSession(page);
 			await input.send("Emulation.setTouchEmulationEnabled", { enabled: true });
+			await page.getByPlaceholder("Message Pi").focus();
+			await input.send("Input.dispatchTouchEvent", {
+				type: "touchStart",
+				touchPoints: [{ x: hx, y: hy }],
+			});
+			await input.send("Input.dispatchTouchEvent", {
+				type: "touchMove",
+				touchPoints: [{ x: hx + 40, y: hy }],
+			});
+			await expect(sidebar).toHaveAttribute("data-dragging", "true");
+			await input.send("Input.dispatchTouchEvent", {
+				type: "touchMove",
+				touchPoints: [{ x: hx + 100, y: hy }],
+			});
+			await input.send("Input.dispatchTouchEvent", {
+				type: "touchEnd",
+				touchPoints: [],
+			});
+			await expect(sidebar).toBeVisible();
+			await finish();
+			await page.keyboard.press("Escape");
+			await expect(sidebar).toBeHidden();
 			await menu.click();
 			await finish();
 			const x = (await sidebar.boundingBox())!.width + 20;
@@ -3207,8 +3366,14 @@ for (const reducedMotion of ["no-preference", "reduce"] as const)
 				expect(middle.x).toBe(0);
 				expect(middle.shade).toBe(1);
 			} else {
-				expect(start.x).toBeCloseTo(-start.width, 0);
-				expect(start.shade).toBe(0);
+				expect(start.x).toBeCloseTo(
+					-start.width + (exit === "Escape" ? 82 : 0),
+					0,
+				);
+				expect(start.shade).toBeCloseTo(
+					exit === "Escape" ? 82 / start.width : 0,
+					2,
+				);
 				expect(middle.x).toBeGreaterThan(-middle.width);
 				expect(middle.x).toBeLessThan(-1);
 				expect(middle.shade).toBeGreaterThan(0);
@@ -6826,6 +6991,7 @@ test.describe("mobile viewport sizing", () => {
 		test(`mobile viewport lifecycle and native text alignment at ${width}px`, async ({
 			page,
 		}, testInfo) => {
+			await page.clock.install();
 			await page.setViewportSize({ width, height: 844 });
 			const owner = {
 				instance: "a".repeat(32),
@@ -6834,6 +7000,7 @@ test.describe("mobile viewport sizing", () => {
 				project: "Layout",
 				parent: "idle",
 				background: "unobserved",
+				rename: true,
 			};
 			await page.route("**/api/snapshot", (route) =>
 				route.fulfill({ json: { connection: "connected", sessions: [owner] } }),
@@ -6853,6 +7020,17 @@ test.describe("mobile viewport sizing", () => {
 										selected: owner,
 										snapshot: {
 											...owner,
+											commands: [
+												{
+													name: "model",
+													source: "builtin",
+													description: "Choose a model in the browser",
+												},
+											],
+											commandModels: Array.from({ length: 6 }, (_, index) => ({
+												reference: `fixture/model-${index}`,
+												name: `Fixture model ${index}`,
+											})),
 											items: [
 												{
 													id: "rotation-text",
@@ -6900,7 +7078,13 @@ test.describe("mobile viewport sizing", () => {
 							document.dispatchEvent(new Event(event));
 						else if (event !== "silent")
 							window.dispatchEvent(
-								new Event(event === "window-resize" ? "resize" : event),
+								new Event(
+									event === "window-resize"
+										? "resize"
+										: event === "window-scroll"
+											? "scroll"
+											: event,
+								),
 							);
 					},
 				});
@@ -6990,7 +7174,12 @@ test.describe("mobile viewport sizing", () => {
 			});
 			// The source only listened to visualViewport; these valid metrics must also
 			// be reconciled when window/lifecycle events are the only notification.
-			for (const event of ["window-resize", "pageshow", "visibilitychange"]) {
+			for (const event of [
+				"window-resize",
+				"window-scroll",
+				"pageshow",
+				"visibilitychange",
+			]) {
 				await metrics(500, 20, "resize");
 				await checkBounds(500, 20);
 				await draft.blur();
@@ -7055,6 +7244,37 @@ test.describe("mobile viewport sizing", () => {
 				await checkBounds(focused ? 300 : 844, focused ? 64 : 0);
 				if (focused) await expect(draft).toBeFocused();
 				else await expect(draft).not.toBeFocused();
+				await expect(draft).toHaveValue("Hello Pi");
+			}
+			// Dictation can keep focus and publish metrics after the two-frame recheck,
+			// without another viewport event. Input must also start a bounded recheck.
+			await draft.focus();
+			for (const [event, delay] of [
+				["resize", 150],
+				["input", 900],
+			] as const) {
+				await metrics(300, 64, "silent");
+				await page.evaluate(
+					({ event, delay }) => {
+						if (event === "input")
+							document
+								.querySelector("#draft")!
+								.dispatchEvent(new Event("input", { bubbles: true }));
+						else window.visualViewport!.dispatchEvent(new Event(event));
+						// This delay models the OS transition, not a test synchronization wait.
+						setTimeout(() => {
+							(
+								window as unknown as {
+									setViewportMetrics: (h: number, t: number, e: string) => void;
+								}
+							).setViewportMetrics(844, 0, "silent");
+						}, delay);
+					},
+					{ event, delay },
+				);
+				await checkBounds(300, 64);
+				await checkBounds(844, 0);
+				await expect(draft).toBeFocused();
 				await expect(draft).toHaveValue("Hello Pi");
 			}
 			// Invalid transition readings must fall back, not freeze the old keyboard shell.
@@ -7137,6 +7357,150 @@ test.describe("mobile viewport sizing", () => {
 			await expect(
 				page.getByRole("img", { name: "Local attachment preview" }),
 			).toHaveCount(1);
+			// Top-layer dialogs must use the same panned, keyboard-reduced viewport.
+			await page.getByRole("button", { name: /^Open sessions:/ }).click();
+			const drawer = page.getByRole("dialog", {
+				name: "Live sessions",
+				exact: true,
+			});
+			await drawer
+				.getByRole("button", { name: "Rename session", exact: true })
+				.click();
+			const rename = drawer.getByRole("textbox", { name: "Session name" });
+			await expect(rename).toBeFocused();
+			await metrics(300, 64, "resize");
+			await expect
+				.poll(async () => (await drawer.boundingBox())!.height)
+				.toBe(300);
+			const drawerBox = (await drawer.boundingBox())!;
+			expect(drawerBox.y).toBe(64);
+			for (const control of [
+				rename,
+				drawer.getByRole("button", { name: "Save", exact: true }),
+				drawer.getByRole("button", { name: "Cancel", exact: true }),
+			]) {
+				await control.scrollIntoViewIfNeeded();
+				const box = (await control.boundingBox())!;
+				expect(box.y).toBeGreaterThanOrEqual(64);
+				expect(box.y + box.height).toBeLessThanOrEqual(364);
+			}
+			await drawer.screenshot({
+				path: testInfo.outputPath(`keyboard-rename-${width}.png`),
+			});
+			await drawer.getByRole("button", { name: "Cancel", exact: true }).tap();
+			await drawer.getByRole("button", { name: "Close sessions" }).tap();
+			await expect(drawer).not.toBeVisible();
+			await expect(draft).toHaveValue("Short again");
+			await page.getByRole("button", { name: /^Remove image/ }).click();
+			await draft.fill("/mo");
+			await draft.press("Enter");
+			const picker = page.getByRole("dialog", { name: "Choose Pi model" });
+			await expect(picker).toBeVisible();
+			// Another modal owns its surface; its edge must not start a drawer drag.
+			await picker.evaluate((node) => {
+				for (const [type, x] of [
+					["touchstart", 32],
+					["touchmove", 132],
+					["touchend", 132],
+				] as const) {
+					const event = new TouchEvent(type, {
+						bubbles: true,
+						cancelable: true,
+					});
+					const touch = {
+						identifier: 1,
+						clientX: x,
+						clientY: node.getBoundingClientRect().top + 40,
+					};
+					Object.defineProperties(event, {
+						touches: { value: type === "touchend" ? [] : [touch] },
+						changedTouches: { value: [touch] },
+					});
+					node.dispatchEvent(event);
+				}
+			});
+			await expect(drawer).not.toBeVisible();
+			for (const [height, top] of [
+				[300, 64],
+				[400, 42],
+				[844, 0],
+			]) {
+				await metrics(height, top, "resize");
+				await expect
+					.poll(async () => {
+						const box = (await picker.boundingBox())!;
+						return box.y >= top && box.y + box.height <= top + height;
+					})
+					.toBe(true);
+				await picker.locator(".model-option").last().tap();
+				await expect(picker.getByRole("radio").last()).toBeChecked();
+				if (height === 300)
+					await picker.screenshot({
+						path: testInfo.outputPath(`keyboard-model-picker-${width}.png`),
+					});
+				for (const control of [
+					picker.getByRole("heading"),
+					picker.getByRole("button", { name: "Cancel", exact: true }),
+					picker.getByRole("button", { name: "Use model" }),
+				]) {
+					const box = (await control.boundingBox())!;
+					expect(box.y).toBeGreaterThanOrEqual(top);
+					expect(box.y + box.height).toBeLessThanOrEqual(top + height);
+				}
+			}
+			await picker.getByRole("button", { name: "Cancel", exact: true }).click();
+			await expect(picker).not.toBeVisible();
+			await expect(draft).toHaveValue("/model ");
+			// A transition window must sample throughout, then stop reading geometry.
+			await page.evaluate(() => {
+				const viewport = window.visualViewport!;
+				let height = viewport.height;
+				let reads = 0;
+				Object.defineProperty(viewport, "height", {
+					get: () => {
+						reads++;
+						return height;
+					},
+					set: (value: number) => {
+						height = value;
+					},
+				});
+				Object.defineProperty(window, "viewportReadCount", {
+					get: () => reads,
+				});
+				let writes = 0;
+				new MutationObserver((records) => {
+					writes += records.length;
+				}).observe(document.querySelector("main")!, {
+					attributes: true,
+					attributeFilter: ["style"],
+				});
+				Object.defineProperty(window, "viewportStyleWrites", {
+					get: () => writes,
+				});
+			});
+			await metrics(400, 42, "resize");
+			await page.clock.runFor(100);
+			const writes = () =>
+				page.evaluate(
+					() =>
+						(window as unknown as { viewportStyleWrites: number })
+							.viewportStyleWrites,
+				);
+			const initialWrites = await writes();
+			expect(initialWrites).toBeGreaterThan(0);
+			await page.clock.runFor(1000);
+			expect(await writes()).toBe(initialWrites);
+			const reads = () =>
+				page.evaluate(
+					() =>
+						(window as unknown as { viewportReadCount: number })
+							.viewportReadCount,
+				);
+			const settledReads = await reads();
+			expect(settledReads).toBeGreaterThan(10);
+			await page.clock.runFor(2000);
+			expect(await reads()).toBe(settledReads);
 			expect(posts).toEqual([]);
 		});
 });

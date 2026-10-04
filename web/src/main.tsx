@@ -4,6 +4,7 @@ import { Composer, ActionReceipt } from "./composer.js";
 import { Conversation, SafeMarkdown } from "./conversation.js";
 import { useBrowserSession } from "./use-browser-session.js";
 import { useSessionDrawer } from "./use-session-drawer.js";
+import { useVisibleViewport } from "./use-visible-viewport.js";
 import "./style.css";
 import { QuestionPanel } from "./questions.js";
 import { ChatViewport } from "./chat-viewport.js";
@@ -265,6 +266,7 @@ function App() {
 		operating,
 		composerAvailability,
 		inputNotice,
+		reloadNotice,
 		inputReceipt,
 		outstanding,
 		stopAttempt,
@@ -276,6 +278,8 @@ function App() {
 		pickImage,
 		removeImage,
 		commands,
+		commandModels,
+		acknowledgeCommand,
 		canSend,
 		canBusyText,
 		canRetryInput,
@@ -309,75 +313,7 @@ function App() {
 		restoreSessionFocus,
 	} = useSessionDrawer(paired);
 
-	useEffect(() => {
-		const viewport = window.visualViewport;
-		const root = app.current;
-		if (!viewport || !root) return;
-		const restore = () => {
-			root.style.removeProperty("--visible-height");
-			root.style.removeProperty("--visible-top");
-			root.style.removeProperty("--visible-bottom-padding");
-		};
-		const syncViewport = () => {
-			// The visual viewport shrinks for overlay keyboards; zoom is not a keyboard.
-			if (
-				!Number.isFinite(viewport.scale) ||
-				Math.abs(viewport.scale - 1) > 0.01
-			) {
-				restore();
-				return;
-			}
-			// Safari may already reduce innerHeight for the keyboard. The pan offset
-			// positions the visible area; it must not also reduce its reported height.
-			const top = Math.max(0, viewport.offsetTop);
-			const height = viewport.height;
-			if (height <= 0 || !Number.isFinite(height + top)) {
-				restore();
-				return;
-			}
-			root.style.setProperty("--visible-height", `${height}px`);
-			root.style.setProperty("--visible-top", `${top}px`);
-			if (
-				document.activeElement === draftInput.current &&
-				height < document.documentElement.clientHeight
-			)
-				root.style.setProperty("--visible-bottom-padding", "8px");
-			else root.style.removeProperty("--visible-bottom-padding");
-		};
-		let frame = 0;
-		const reconcileViewport = () => {
-			cancelAnimationFrame(frame);
-			syncViewport();
-			// WebKit can publish dimensions after its event, without notifying again.
-			// Recheck over two animation frames, not a permanent timer (webkit.org/b/237851).
-			frame = requestAnimationFrame(() => {
-				syncViewport();
-				frame = requestAnimationFrame(() => {
-					frame = 0;
-					syncViewport();
-				});
-			});
-		};
-		const windowEvents = ["resize", "pageshow", "focus", "orientationchange"];
-		const documentEvents = ["visibilitychange", "focusin", "focusout"];
-		reconcileViewport();
-		viewport.addEventListener("resize", reconcileViewport);
-		viewport.addEventListener("scroll", reconcileViewport);
-		for (const event of windowEvents)
-			window.addEventListener(event, reconcileViewport);
-		for (const event of documentEvents)
-			document.addEventListener(event, reconcileViewport);
-		return () => {
-			cancelAnimationFrame(frame);
-			viewport.removeEventListener("resize", reconcileViewport);
-			viewport.removeEventListener("scroll", reconcileViewport);
-			for (const event of windowEvents)
-				window.removeEventListener(event, reconcileViewport);
-			for (const event of documentEvents)
-				document.removeEventListener(event, reconcileViewport);
-			restore();
-		};
-	}, [app]);
+	useVisibleViewport(app);
 	useEffect(() => {
 		// The fragment is a per-address view pointer, never a credential or input payload.
 		// Reuse normal authenticated read-only attachment and generation reconciliation.
@@ -832,6 +768,7 @@ function App() {
 				operating={operating}
 				composerAvailability={composerAvailability}
 				inputNotice={inputNotice}
+				reloadNotice={reloadNotice}
 				inputReceipt={inputReceipt}
 				outstanding={outstanding}
 				stopAttempt={stopAttempt}
@@ -843,6 +780,8 @@ function App() {
 				pickImage={pickImage}
 				removeImage={removeImage}
 				commands={commands}
+				commandModels={commandModels}
+				acknowledgeCommand={acknowledgeCommand}
 				canSend={canSend}
 				canBusyText={canBusyText}
 				canRetryInput={canRetryInput}
@@ -855,6 +794,7 @@ function App() {
 				controller={view.controller}
 				observedQuestions={observedQuestions}
 				onReviewQuestions={() => setQuestionReview((value) => value + 1)}
+				onOpenSessions={openSessions}
 			/>
 		</main>
 	);

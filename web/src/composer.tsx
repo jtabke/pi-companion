@@ -13,6 +13,7 @@ type ComposerProps = Pick<
 	| "operating"
 	| "composerAvailability"
 	| "inputNotice"
+	| "reloadNotice"
 	| "inputReceipt"
 	| "outstanding"
 	| "stopAttempt"
@@ -24,6 +25,8 @@ type ComposerProps = Pick<
 	| "pickImage"
 	| "removeImage"
 	| "commands"
+	| "commandModels"
+	| "acknowledgeCommand"
 	| "canSend"
 	| "canBusyText"
 	| "canRetryInput"
@@ -37,6 +40,7 @@ type ComposerProps = Pick<
 	controller: View["controller"];
 	observedQuestions: number;
 	onReviewQuestions: () => void;
+	onOpenSessions: () => void;
 };
 
 export function ActionReceipt({
@@ -93,6 +97,7 @@ export function Composer({
 	operating,
 	composerAvailability,
 	inputNotice,
+	reloadNotice,
 	inputReceipt,
 	outstanding,
 	stopAttempt,
@@ -104,6 +109,8 @@ export function Composer({
 	pickImage,
 	removeImage,
 	commands,
+	commandModels,
+	acknowledgeCommand,
 	canSend,
 	canBusyText,
 	canRetryInput,
@@ -116,7 +123,34 @@ export function Composer({
 	controller,
 	observedQuestions,
 	onReviewQuestions,
+	onOpenSessions,
 }: ComposerProps) {
+	const modelDialog = useRef<HTMLDialogElement>(null);
+	const [modelPickerOwner, setModelPickerOwner] = useState<string>();
+	const [modelChoice, setModelChoice] = useState("");
+	const modelPickerOpen =
+		modelPickerOwner === selectedKey && reachable && inputIdle;
+	useLayoutEffect(() => {
+		const dialog = modelDialog.current;
+		if (modelPickerOpen && !dialog?.open) dialog?.showModal();
+		else if (!modelPickerOpen && dialog?.open) dialog.close();
+	}, [modelPickerOpen]);
+	function openModelPicker() {
+		setModelChoice(commandModels?.[0]?.reference ?? "");
+		setModelPickerOwner(selectedKey);
+	}
+	function submitText(retry = false, mode?: TextRequest["deliverAs"]) {
+		if (
+			!retry &&
+			sendEnabled &&
+			draft.trim() === "/model" &&
+			commands?.some((c) => c.name === "model" && c.source === "builtin")
+		) {
+			openModelPicker();
+			return;
+		}
+		void sendText(retry, mode);
+	}
 	const composing = useRef(false);
 	const keyboardSwipe = useRef<
 		| {
@@ -147,7 +181,10 @@ export function Composer({
 	const suggestions =
 		prefix !== undefined && closedSlash !== slashKey
 			? (commands
-					?.filter((command) => command.name.startsWith(prefix))
+					?.filter(
+						(command) =>
+							command.source !== "extension" && command.name.startsWith(prefix),
+					)
 					.slice(0, 8) ?? [])
 			: [];
 	const slashIndex =
@@ -161,7 +198,17 @@ export function Composer({
 		const text = `/${command.name}${space < 0 ? " " : draft.slice(space)}`;
 		editDraft(text);
 		setClosedSlash(`${selectedKey}:${text}`);
-		draftInput.current?.focus({ preventScroll: true });
+		if (
+			command.name === "model" &&
+			command.source === "builtin" &&
+			text.trim() === "/model" &&
+			inputIdle &&
+			!attachment &&
+			!operating &&
+			!outstanding
+		)
+			openModelPicker();
+		else draftInput.current?.focus({ preventScroll: true });
 	}
 	useLayoutEffect(() => {
 		const input = draftInput.current;
@@ -210,9 +257,20 @@ export function Composer({
 		!conflict;
 	const otherBrowserHoldsInput =
 		receiptShowsOutcome && !!controller?.held && !held;
+	const browsingCommands =
+		reachable &&
+		inputIdle &&
+		!attachment &&
+		!conflict &&
+		!operating &&
+		!outstanding &&
+		(!controller?.held || held) &&
+		(draft === "/" || suggestions.length > 0);
 	const composerStatus = otherBrowserHoldsInput
 		? "Another browser has control — take over explicitly to send."
-		: composerAvailability;
+		: browsingCommands
+			? ""
+			: composerAvailability;
 	return (
 		<>
 			{paired && selected && (
@@ -248,7 +306,8 @@ export function Composer({
 									!sendEnabled &&
 									!(canBusyText && !inputIdle && !!attachment) &&
 									!operating &&
-									!outstanding)
+									!outstanding &&
+									!browsingCommands)
 									? "composer-availability"
 									: "visually-hidden"
 							}
@@ -258,6 +317,11 @@ export function Composer({
 						<p id="attachment-guidance" className="visually-hidden">
 							Up to four still PNG, JPEG or WebP images · 4 MB total
 						</p>
+						{reloadNotice && (
+							<p className="input-notice" role="status">
+								Pi reloaded
+							</p>
+						)}
 						{inputNotice && !inputNotice.routine && (
 							<p className="input-notice" role="status">
 								{inputNotice.message}
@@ -292,35 +356,6 @@ export function Composer({
 								))}
 							</div>
 						)}
-						{!!suggestions.length && (
-							<div
-								id="slash-suggestions"
-								role="listbox"
-								aria-label="Selected Pi slash commands"
-								className="slash-suggestions"
-							>
-								{suggestions.map((command, index) => (
-									<button
-										key={command.name}
-										id={`slash-option-${index}`}
-										role="option"
-										aria-selected={index === slashIndex}
-										onMouseDown={(event) => event.preventDefault()}
-										onClick={() => selectSlash(index)}
-									>
-										<strong>/{command.name}</strong>
-										<span>{command.description}</span>
-										<small>
-											{command.source === "extension"
-												? "Extension · terminal only / browser unverified"
-												: command.source === "prompt"
-													? "Prompt template · idle text only"
-													: "Skill · idle text only"}
-										</small>
-									</button>
-								))}
-							</div>
-						)}
 
 						{inputReceipt && !inputReceipt.routine && (
 							<ActionReceipt {...inputReceipt} />
@@ -331,7 +366,12 @@ export function Composer({
 								message="Input belongs to another session. Original retained; switch back to review."
 							/>
 						)}
-						{outstanding?.uncertain && (
+						{outstanding?.uncertain && outstanding.nativeCommand && (
+							<button disabled={operating} onClick={acknowledgeCommand}>
+								Dismiss command receipt without retrying
+							</button>
+						)}
+						{outstanding?.uncertain && !outstanding.nativeCommand && (
 							<button
 								disabled={
 									!canRetryInput ||
@@ -365,11 +405,63 @@ export function Composer({
 							</button>
 						)}
 					</div>
+					{!!suggestions.length && (
+						<div
+							id="slash-suggestions"
+							role="listbox"
+							aria-label="Selected Pi slash commands"
+							className="slash-suggestions"
+						>
+							{suggestions.map((command, index) => (
+								<button
+									key={command.name}
+									id={`slash-option-${index}`}
+									role="option"
+									aria-selected={index === slashIndex}
+									onMouseDown={(event) => event.preventDefault()}
+									onClick={() => selectSlash(index)}
+								>
+									<strong>/{command.name}</strong>
+									<span>{command.description}</span>
+								</button>
+							))}
+						</div>
+					)}
 					<div
 						className="composer-bar"
 						data-draft={draft.length > 0}
 						data-busy={showBusyMode}
 					>
+						<button
+							type="button"
+							className="composer-drawer-handle"
+							aria-label="Open sessions from editor"
+							aria-haspopup="dialog"
+							title="Tap or swipe right to open sessions"
+							onMouseDown={(event) => {
+								if (
+									event.button === 0 &&
+									document.activeElement === draftInput.current
+								)
+									event.preventDefault();
+							}}
+							onClick={onOpenSessions}
+						>
+							<svg
+								aria-hidden="true"
+								width="20"
+								height="20"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							>
+								<rect x="3" y="4" width="18" height="16" rx="2" />
+								<path d="M9 4v16" />
+							</svg>
+						</button>
 						<div className="attachment-picker">
 							<label htmlFor="attachment">
 								<span aria-hidden="true">+</span>
@@ -516,7 +608,7 @@ export function Composer({
 										(!event.altKey || showBusyMode)
 									) {
 										event.preventDefault();
-										void sendText(
+										submitText(
 											false,
 											inputIdle
 												? undefined
@@ -613,7 +705,7 @@ export function Composer({
 									event.preventDefault();
 							}}
 							onClick={() => {
-								void sendText(false, inputIdle ? undefined : busyMode);
+								submitText(false, inputIdle ? undefined : busyMode);
 								draftInput.current?.blur();
 							}}
 						>
@@ -634,6 +726,86 @@ export function Composer({
 					</div>
 				</section>
 			)}
+			<dialog
+				ref={modelDialog}
+				className="model-picker"
+				aria-labelledby="model-picker-title"
+				onClose={() => setModelPickerOwner(undefined)}
+			>
+				<form
+					onSubmit={(event) => {
+						event.preventDefault();
+						if (
+							!modelPickerOpen ||
+							!canSend ||
+							!commandModels?.some((m) => m.reference === modelChoice)
+						)
+							return;
+						const text = `/model ${modelChoice}`;
+						editDraft(text);
+						setClosedSlash(`${selectedKey}:${text}`);
+						setModelPickerOwner(undefined);
+					}}
+				>
+					<h2 id="model-picker-title">Choose Pi model</h2>
+					{commandModels?.length ? (
+						<div
+							className="model-options"
+							role="radiogroup"
+							aria-label="Available models"
+						>
+							{commandModels.map((model) => (
+								<label className="model-option" key={model.reference}>
+									<input
+										className="visually-hidden"
+										type="radio"
+										name="command-model"
+										value={model.reference}
+										checked={modelChoice === model.reference}
+										onChange={() => setModelChoice(model.reference)}
+									/>
+									<span>
+										<strong>{model.name}</strong>
+										<small>{model.reference}</small>
+									</span>
+									<svg
+										className="model-option-check"
+										aria-hidden="true"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="2"
+										strokeLinecap="round"
+										strokeLinejoin="round"
+									>
+										<path d="m5 12 4 4 10-10" />
+									</svg>
+								</label>
+							))}
+						</div>
+					) : (
+						<p role="status">No models available.</p>
+					)}
+					<div className="model-picker-actions">
+						<button
+							type="button"
+							onClick={() => setModelPickerOwner(undefined)}
+						>
+							Cancel
+						</button>
+						<button
+							type="submit"
+							disabled={
+								!modelPickerOpen ||
+								!canSend ||
+								!commandModels?.some((m) => m.reference === modelChoice)
+							}
+						>
+							Use model
+						</button>
+					</div>
+				</form>
+			</dialog>
 		</>
 	);
 }

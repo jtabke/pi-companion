@@ -137,5 +137,34 @@ terminal-only behavior. `--companion` checks the production bridge/gateway/brows
 requires built Companion output and the local Chromium engine. It cannot be combined
 with `--default-off`. No global install/settings change is included.
 
+## Native slash commands
+
+Requires the already-installed **Pi 1.0.1**, Node, Python with POSIX PTY support,
+and freshly built Companion output:
+
+```sh
+npm run build
+python3 -B probes/run-native-commands.py
+```
+
+The runner starts one disposable real Pi terminal with isolated HOME/config/session/runtime
+folders, no ambient extensions or credentials, and a metadata-only local provider that
+fails any inference attempt. It loads the production bridge from the package's declared
+entry before `native-command-extension.ts` installs its custom editor. This protects the
+editor load-order contract. Exact terminal `/reload` activates the hook without replacing
+Pi or its session. Capability-authenticated Unix-socket requests then exercise native
+model selection, `/new`, `/reload`, draft/unknown/stale rejection and same-ID receipt replay.
+The real terminal's custom editor and registered fixture command still work after lifecycle
+changes. Previous conversation content disappears after `/new`; `/reload` retains the native
+session. All checks require zero model-input fallthrough, agent starts and provider calls.
+
+This is bridge/native evidence, not HTTP browser-authentication or phone evidence. The
+browser fixtures cover the picker and uncertain-command recovery separately. Each wait is
+bounded at 20 seconds and socket reads at 3 seconds; the runner drains the PTY during reads
+to prevent terminal backpressure. It cleans only its owned child, descriptors and runtime.
+Exit 0 means all assertions and cleanup passed; failure emits a sanitized stage/error class.
+Raw terminal output and credentials are not saved. It does not install anything globally,
+change personal settings, start a second runtime for Companion, or touch working terminals.
+
 All native probes are separate from `npm run check`. Fixture success does not prove
 model consumption, actual-phone behavior or compatibility with a newer Pi version.

@@ -110,11 +110,11 @@ describe("bridgeExtension terminal-only lifecycle", () => {
 		).toBe(true);
 	}
 
-	it("declares only the built bridge as a Pi resource", () => {
+	it("declares only the reloadable source bridge as a Pi resource", () => {
 		const manifest = JSON.parse(
 			readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 		);
-		expect(manifest.pi).toEqual({ extensions: ["./dist/extension/bridge.js"] });
+		expect(manifest.pi).toEqual({ extensions: ["./src/extension/bridge.ts"] });
 	});
 
 	it("factory registration and shutdown leave a nonexistent runtime untouched", async () => {

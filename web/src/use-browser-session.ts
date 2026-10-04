@@ -31,19 +31,23 @@ function slashGuidance(
 	commands: Command[] | undefined,
 ) {
 	if (!text.trimStart().startsWith("/")) return;
-	if (image)
-		return "Slash commands with images are unsupported — keep the local draft; remove the image to use a command.";
-	if (busy)
-		return "Busy slash commands are unsupported — keep the local draft until Pi is idle, or use the terminal.";
-	if (!commands)
-		return "Slash discovery unavailable — keep the local draft; fully restart the owning Pi to load the updated bridge.";
-	const command = text.startsWith("/")
-		? commands.find((c) => c.name === text.slice(1).split(" ", 1)[0])
+	if (image) return "Remove images to use a command.";
+	if (busy) return "Commands are available when Pi is idle.";
+	const name = text.startsWith("/")
+		? text.slice(1).split(" ", 1)[0]
 		: undefined;
-	if (!command)
-		return "Unknown or terminal-only slash command — keep the local draft or use the terminal.";
-	if (command.source === "extension")
-		return "Extension command: terminal only (browser interaction unverified) — keep the local draft or use the terminal.";
+	const command = commands?.find((c) => c.name === name);
+	if (!command && name && ["new", "reload", "model"].includes(name))
+		return "Command not available in this Pi session.";
+	if (!commands) return "Commands unavailable. Reload the bridge in Pi.";
+	if (!command) return "Command not available.";
+	if (command.source === "extension") return "Use this command in Pi.";
+	if (
+		command.source === "builtin" &&
+		command.name !== "model" &&
+		text.trim() !== `/${command.name}`
+	)
+		return "This command takes no arguments.";
 }
 
 function identityKey(identity?: Identity) {
@@ -142,6 +146,13 @@ export function useBrowserSession({
 	const [operating, setOperating] = useState(false);
 	const [inputNotice, setInputNotice] = useState<Notice>();
 	const [inputReceipt, setInputReceipt] = useState<ActionReceipt>();
+	const [reloadNotice, setReloadNotice] = useState<Identity>();
+	const lastSnapshot = useRef<Identity | undefined>(undefined);
+	useEffect(() => {
+		if (!reloadNotice) return;
+		const timer = setTimeout(() => setReloadNotice(undefined), 4000);
+		return () => clearTimeout(timer);
+	}, [reloadNotice]);
 	function setInputStatus(
 		message: string,
 		identity = selected,
@@ -155,6 +166,7 @@ export function useBrowserSession({
 			requestId: string;
 			text?: string;
 			deliverAs?: TextRequest["deliverAs"];
+			nativeCommand?: boolean;
 		},
 		message: string,
 		routine = false,
@@ -164,9 +176,11 @@ export function useBrowserSession({
 			requestId: attempt.requestId,
 			message,
 			routine,
-			...(routine && attempt.deliverAs
-				? { text: attempt.text, deliverAs: attempt.deliverAs }
-				: {}),
+			...(attempt.nativeCommand
+				? { text: attempt.text }
+				: routine && attempt.deliverAs
+					? { text: attempt.text, deliverAs: attempt.deliverAs }
+					: {}),
 		});
 	}
 	const [outstanding, setOutstanding] = useState<
@@ -178,6 +192,7 @@ export function useBrowserSession({
 				files?: File[];
 				sources?: string[];
 				uncertain: boolean;
+				nativeCommand: boolean;
 		  }
 		| undefined
 	>();
@@ -444,6 +459,7 @@ export function useBrowserSession({
 		(!view.controller?.held ||
 			(held && !!authority.current && authority.current.expires > Date.now()));
 	const commands = selectedCommands(view, selected, reachable);
+	const commandModels = commands ? view.snapshot?.commandModels : undefined;
 	const slashNotice = slashGuidance(draft, !!attachment, !inputIdle, commands);
 	const canSend = actionReady && inputIdle && !slashNotice;
 	const canBusyText =
@@ -452,6 +468,7 @@ export function useBrowserSession({
 		selectedSummary.stop !== "stopping" &&
 		!draft.trimStart().startsWith("/");
 	const canRetryInput =
+		!outstanding?.nativeCommand &&
 		actionReady &&
 		(outstanding?.deliverAs
 			? selectedSummary?.busyText === true &&
@@ -869,6 +886,12 @@ export function useBrowserSession({
 					files: attachment,
 					sources: undefined as string[] | undefined,
 					uncertain: false,
+					nativeCommand:
+						commands?.some(
+							(c) =>
+								c.source === "builtin" &&
+								c.name === draft.slice(1).split(" ", 1)[0],
+						) ?? false,
 				};
 		if (
 			!pending ||
@@ -1011,7 +1034,7 @@ export function useBrowserSession({
 							: pending.deliverAs === "followUp"
 								? "Follow-up requested (completion unconfirmed)"
 								: "Forwarded; completion unconfirmed"
-						: `Rejected: ${receipt.reason === "model-no-images" ? "Current Pi model does not support images" : receipt.reason === "images-blocked" ? "Pi settings block images" : receipt.reason === "image-policy-unknown" ? "Pi model/image policy unavailable or unknown" : receipt.reason}`,
+						: `Rejected: ${receipt.reason === "terminal-draft" ? "Clear or send the unsent draft in the Pi terminal first" : receipt.reason === "model-no-images" ? "Current Pi model does not support images" : receipt.reason === "images-blocked" ? "Pi settings block images" : receipt.reason === "image-policy-unknown" ? "Pi model/image policy unavailable or unknown" : receipt.reason}`,
 					receipt.status === "dispatched",
 				);
 				const key = `${pending.identity.instance}:${pending.identity.generation}`;
@@ -1049,6 +1072,10 @@ export function useBrowserSession({
 	// All scope departures and observations apply here, before any awaited action can resume.
 	function transition(next: BrowserSession, depart = false) {
 		const previous = live.current;
+		if (depart || next.selected?.instance !== previous.selected?.instance) {
+			lastSnapshot.current = undefined;
+			setReloadNotice(undefined);
+		}
 		const scopeChanged =
 			depart ||
 			next.paired !== previous.paired ||
@@ -1095,6 +1122,27 @@ export function useBrowserSession({
 			identityKey(next.selected) !== identityKey(live.current.selected)
 		)
 			return false;
+		if (
+			next.connection === "connected" &&
+			!next.conflict &&
+			next.snapshot &&
+			identityKey(next.snapshot) === identityKey(next.selected)
+		) {
+			const snapshot = next.snapshot;
+			if (
+				lastSnapshot.current?.instance === snapshot.instance &&
+				lastSnapshot.current.generation !== snapshot.generation &&
+				snapshot.generationReason === "reload"
+			)
+				setReloadNotice({
+					instance: snapshot.instance,
+					generation: snapshot.generation,
+				});
+			lastSnapshot.current = {
+				instance: snapshot.instance,
+				generation: snapshot.generation,
+			};
+		}
 		const pendingRename = renamePending.current.get(identityKey(next.selected));
 		if (
 			pendingRename &&
@@ -1443,6 +1491,8 @@ export function useBrowserSession({
 		held,
 		operating,
 		composerAvailability,
+		reloadNotice:
+			reachable && !!reloadNotice && identityKey(reloadNotice) === selectedKey,
 		inputNotice:
 			inputNotice &&
 			`${inputNotice.identity.instance}:${inputNotice.identity.generation}` ===
@@ -1470,6 +1520,21 @@ export function useBrowserSession({
 		pickImage,
 		removeImage,
 		commands,
+		commandModels,
+		acknowledgeCommand: () => {
+			if (!operating && outstanding?.nativeCommand && outstanding.uncertain) {
+				inputResult(
+					outstanding,
+					"Command outcome remains unknown — check Pi before submitting another command",
+				);
+				const key = identityKey(outstanding.identity);
+				if (drafts.current.get(key)?.text === outstanding.text) {
+					drafts.current.set(key, { text: "" });
+					if (key === selectedKey) setDraft("");
+				}
+				setOutstanding(undefined);
+			}
+		},
 		canSend,
 		canBusyText,
 		canRetryInput,
