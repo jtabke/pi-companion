@@ -1,7 +1,57 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import type { Snapshot, Summary } from "../src/shared/protocol.js";
 import { chooseSession } from "./choose-session.mjs";
 import { png } from "./fixture.js";
+
+// Static rendering fixture. Stateful transport and authority journeys own their sources.
+async function renderSnapshots(
+	page: Page,
+	sessions: Summary[],
+	snapshot: Snapshot,
+) {
+	await page.route("**/api/snapshot", (route) =>
+		route.fulfill({ json: { connection: "connected", sessions } }),
+	);
+	await page.addInitScript(
+		({ sessions, snapshot }) => {
+			class FixtureSource extends EventTarget {
+				onopen = null;
+				onerror = null;
+				constructor(url: string) {
+					super();
+					queueMicrotask(() => {
+						const instance = new URL(url, location.origin).searchParams.get(
+							"instance",
+						);
+						const owner = sessions.find(
+							(session) => session.instance === instance,
+						);
+						this.dispatchEvent(
+							new MessageEvent("snapshot", {
+								data: JSON.stringify({
+									connection: "connected",
+									sessions,
+									...(owner
+										? {
+												selected: {
+													instance: owner.instance,
+													generation: owner.generation,
+												},
+												snapshot: { ...snapshot, ...owner },
+											}
+										: {}),
+								}),
+							}),
+						);
+					});
+				}
+				close() {}
+			}
+			Object.defineProperty(window, "EventSource", { value: FixtureSource });
+		},
+		{ sessions, snapshot },
+	);
+}
 
 // Rendering/scroll fixtures only: no Pi, model, lease, or remote service is used.
 for (const width of [320, 390, 900])
@@ -87,55 +137,7 @@ for (const width of [320, 390, 900])
 			],
 		};
 		const sessions = [summary, other];
-		await page.route("**/api/snapshot", (route) =>
-			route.fulfill({ json: { connection: "connected", sessions } }),
-		);
-		// Controllable EventSource exercises real React snapshot reconciliation deterministically.
-		await page.addInitScript(
-			({ sessions, snapshot }) => {
-				const sources = new Set<FixtureSource>();
-				class FixtureSource extends EventTarget {
-					onopen = null;
-					onerror = null;
-					constructor(private url: string) {
-						super();
-						sources.add(this);
-						queueMicrotask(() => this.emit());
-					}
-					close() {
-						sources.delete(this);
-					}
-					emit() {
-						const instance = new URL(
-							this.url,
-							location.origin,
-						).searchParams.get("instance");
-						const owner = sessions.find(
-							(session) => session.instance === instance,
-						);
-						this.dispatchEvent(
-							new MessageEvent("snapshot", {
-								data: JSON.stringify({
-									connection: "connected",
-									sessions,
-									...(owner
-										? {
-												selected: {
-													instance: owner.instance,
-													generation: owner.generation,
-												},
-												snapshot: { ...snapshot, ...owner },
-											}
-										: {}),
-								}),
-							}),
-						);
-					}
-				}
-				Object.defineProperty(window, "EventSource", { value: FixtureSource });
-			},
-			{ sessions, snapshot },
-		);
+		await renderSnapshots(page, sessions, snapshot);
 		if (width === 320)
 			await page.addInitScript(() => {
 				let height: number | undefined;
@@ -4594,42 +4596,7 @@ for (const width of [320, 390])
 				? route.fulfill({ status: 404 })
 				: route.fulfill({ contentType: "image/png", body: image }),
 		);
-		await page.route("**/api/snapshot", (route) =>
-			route.fulfill({ json: { connection: "connected", sessions: [summary] } }),
-		);
-		await page.addInitScript(
-			({ summary, snapshot }) => {
-				class FixtureSource extends EventTarget {
-					onopen = null;
-					onerror = null;
-					constructor(url: string) {
-						super();
-						queueMicrotask(() =>
-							this.dispatchEvent(
-								new MessageEvent("snapshot", {
-									data: JSON.stringify({
-										connection: "connected",
-										sessions: [summary],
-										...(url.includes("instance=")
-											? {
-													selected: {
-														instance: summary.instance,
-														generation: summary.generation,
-													},
-													snapshot,
-												}
-											: {}),
-									}),
-								}),
-							),
-						);
-					}
-					close() {}
-				}
-				Object.defineProperty(window, "EventSource", { value: FixtureSource });
-			},
-			{ summary, snapshot },
-		);
+		await renderSnapshots(page, [summary], snapshot);
 		const posts: string[] = [];
 		page.on("request", (request) => {
 			if (request.method() === "POST") posts.push(request.url());
