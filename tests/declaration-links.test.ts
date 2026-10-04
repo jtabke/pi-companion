@@ -22,11 +22,18 @@ afterEach(() => {
 	for (const root of roots.splice(0))
 		rmSync(root, { recursive: true, force: true });
 });
-function fixture(piVersion = "0.99.2", aiVersion = "0.99.2") {
+function fixture(piVersion = "0.99.2", aiVersion = "0.99.2", managed = false) {
 	const root = mkdtempSync(join(tmpdir(), "companion-types-"));
 	roots.push(root);
 	const checkout = join(root, "checkout"),
-		host = join(root, "host"),
+		host = managed
+			? join(
+					root,
+					"install/releases",
+					piVersion,
+					"node_modules/@earendil-works/pi-coding-agent",
+				)
+			: join(root, "host"),
 		bin = join(root, "bin");
 	for (const dir of [
 		join(checkout, "scripts"),
@@ -40,7 +47,9 @@ function fixture(piVersion = "0.99.2", aiVersion = "0.99.2") {
 		join(checkout, "scripts/link-pi-declarations.py"),
 	);
 	const piMeta = join(host, "package.json"),
-		ai = join(host, "node_modules/@earendil-works/pi-ai");
+		ai = managed
+			? join(host, "../pi-ai")
+			: join(host, "node_modules/@earendil-works/pi-ai");
 	mkdirSync(ai, { recursive: true });
 	writeFileSync(
 		piMeta,
@@ -56,7 +65,14 @@ function fixture(piVersion = "0.99.2", aiVersion = "0.99.2") {
 	const cli = join(host, "dist/cli.js");
 	writeFileSync(cli, "#!/bin/sh\nexit 99\n");
 	chmodSync(cli, 0o700);
-	symlinkSync(cli, join(bin, "pi"));
+	if (managed) {
+		const releaseBin = join(host, "../../.bin");
+		mkdirSync(releaseBin, { recursive: true });
+		symlinkSync(cli, join(releaseBin, "pi"));
+		writeFileSync(join(root, "install/current-version"), piVersion);
+		writeFileSync(join(bin, "pi"), "#!/bin/sh\nexit 99\n");
+		chmodSync(join(bin, "pi"), 0o700);
+	} else symlinkSync(cli, join(bin, "pi"));
 	const scope = join(checkout, "node_modules/@earendil-works");
 	const run = (path = bin) =>
 		spawnSync(
@@ -71,7 +87,7 @@ function fixture(piVersion = "0.99.2", aiVersion = "0.99.2") {
 	return { root, host, ai, piMeta, scope, run };
 }
 
-it.each(["0.99.2", "1.0.1"])(
+it.each(["0.99.2", "1.0.1", "1.0.2"])(
 	"links reviewed %s declarations, is idempotent, and does not run or modify host Pi",
 	(version) => {
 		const f = fixture(version, version),
@@ -85,10 +101,18 @@ it.each(["0.99.2", "1.0.1"])(
 		expect(readFileSync(f.piMeta, "utf8")).toBe(before);
 	},
 );
+it("resolves managed launcher declarations without executing the launcher", () => {
+	const f = fixture("1.0.2", "1.0.2", true);
+	expect(f.run().status).toBe(0);
+	expect(realpathSync(join(f.scope, "pi-coding-agent"))).toBe(
+		realpathSync(f.host),
+	);
+	expect(realpathSync(join(f.scope, "pi-ai"))).toBe(realpathSync(f.ai));
+});
 it.each([
 	["0.99.1", "0.99.2"],
 	["0.99.2", "0.99.1"],
-	["1.0.2", "1.0.2"],
+	["1.0.3", "1.0.3"],
 	["1.0.1", "0.99.2"],
 ])("refuses unreviewed host versions (%s, %s) before linking", (pi, ai) => {
 	const f = fixture(pi, ai);
