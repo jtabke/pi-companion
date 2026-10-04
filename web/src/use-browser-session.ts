@@ -50,6 +50,21 @@ function slashGuidance(
 		return "This command takes no arguments.";
 }
 
+function createRequestId() {
+	return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
+}
+async function readReceipt(response: Response, requestId: string) {
+	const receipt = (await response.json()) as Receipt;
+	if (
+		receipt.requestId !== requestId ||
+		!["dispatched", "uncertain", "rejected"].includes(receipt.status)
+	)
+		throw Error("Invalid receipt");
+	return receipt;
+}
+
 function identityKey(identity?: Identity) {
 	return identity ? `${identity.instance}:${identity.generation}` : "";
 }
@@ -299,10 +314,7 @@ export function useBrowserSession({
 			identity: { ...editor.identity },
 			name: editor.name,
 			message: "",
-			requestId: Array.from(
-				crypto.getRandomValues(new Uint8Array(16)),
-				(byte) => byte.toString(16).padStart(2, "0"),
-			).join(""),
+			requestId: createRequestId(),
 		};
 		const epoch = controlEpoch.current;
 		const key = identityKey(attempt.identity);
@@ -353,12 +365,7 @@ export function useBrowserSession({
 					dropControl();
 				return;
 			}
-			const receipt = (await response.json()) as Receipt;
-			if (
-				receipt.requestId !== attempt.requestId ||
-				!["dispatched", "uncertain", "rejected"].includes(receipt.status)
-			)
-				throw Error("Invalid receipt");
+			const receipt = await readReceipt(response, attempt.requestId);
 			// A newer native name observation wins over this void-call receipt.
 			if (renamePending.current.get(key) !== attempt) return;
 			if (receipt.status === "rejected") {
@@ -586,10 +593,7 @@ export function useBrowserSession({
 			? stopAttempt
 			: {
 					identity: selected,
-					requestId: Array.from(
-						crypto.getRandomValues(new Uint8Array(16)),
-						(byte) => byte.toString(16).padStart(2, "0"),
-					).join(""),
+					requestId: createRequestId(),
 					uncertain: false,
 				};
 		if (
@@ -643,12 +647,7 @@ export function useBrowserSession({
 					dropControl();
 				return;
 			}
-			const receipt = (await response.json()) as Receipt;
-			if (
-				receipt.requestId !== pending.requestId ||
-				!["dispatched", "uncertain", "rejected"].includes(receipt.status)
-			)
-				throw Error("Invalid receipt");
+			const receipt = await readReceipt(response, pending.requestId);
 			const uncertain =
 				receipt.status === "uncertain" ||
 				(pending.uncertain && receipt.status === "rejected");
@@ -877,10 +876,7 @@ export function useBrowserSession({
 			? outstanding
 			: {
 					identity: selected,
-					requestId: Array.from(
-						crypto.getRandomValues(new Uint8Array(16)),
-						(byte) => byte.toString(16).padStart(2, "0"),
-					).join(""),
+					requestId: createRequestId(),
 					text: draft,
 					deliverAs: mode,
 					files: attachment,
@@ -1009,12 +1005,7 @@ export function useBrowserSession({
 				if (response.status === 401 || response.status === 409) dropControl();
 				return;
 			}
-			const receipt = (await response.json()) as Receipt;
-			if (
-				receipt.requestId !== pending.requestId ||
-				!["dispatched", "uncertain", "rejected"].includes(receipt.status)
-			)
-				throw Error("Invalid receipt");
+			const receipt = await readReceipt(response, pending.requestId);
 			if (
 				receipt.status === "uncertain" ||
 				(receipt.status === "rejected" && pending.uncertain)
@@ -1424,9 +1415,7 @@ export function useBrowserSession({
 		>;
 		const payload = {
 			...original,
-			replyId: Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
-				byte.toString(16).padStart(2, "0"),
-			).join(""),
+			replyId: createRequestId(),
 		};
 		if (new TextEncoder().encode(JSON.stringify(payload)).length > 65536)
 			return "too-large";

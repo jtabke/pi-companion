@@ -41,7 +41,13 @@ export async function chooseSession(page, instance) {
 			exact: true,
 		})
 		.nth(peers.findIndex((session) => session.instance === instance));
-	await row.getByRole("button").click();
+	await row
+		.getByRole("button", {
+			name: new RegExp(
+				`^${RegExp.escape(`${owner.session} ${owner.project} `)}`,
+			),
+		})
+		.click();
 	await expect(dialog).toBeHidden();
 	await expect
 		.poll(() =>

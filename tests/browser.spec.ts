@@ -1415,6 +1415,33 @@ test("U8 focused Enter dismisses only forwarded unchanged current input, includi
 		(await (await context.request.get("/api/fixture/dispatches")).json())
 			.dispatches,
 	).toBe(before + 5);
+	// Malformed or uncorrelated receipts cannot clear the draft or confirm delivery.
+	for (const invalid of ["wrong-id", "unknown-status"] as const) {
+		await draft.fill(`retain ${invalid}`);
+		await page.route(
+			"**/api/text",
+			(route) =>
+				route.fulfill({
+					json: {
+						requestId:
+							invalid === "wrong-id"
+								? "0".repeat(32)
+								: route.request().postDataJSON().requestId,
+						status: invalid === "unknown-status" ? "accepted" : "dispatched",
+					},
+				}),
+			{ times: 1 },
+		);
+		await draft.press("Enter");
+		await expect(retry).toBeEnabled();
+		await expect(draft).toBeFocused();
+		await expect(draft).toHaveValue(`retain ${invalid}`);
+		const original = requests.at(-1)!;
+		await retry.evaluate((node) => (node as HTMLButtonElement).click());
+		await expect(draft).toHaveValue("");
+		expect(requests.at(-1)!.requestId).toBe(original.requestId);
+		expect(requests.at(-1)!.text).toBe(original.text);
+	}
 	await state("reset");
 	questionCookies = await context.cookies();
 });
