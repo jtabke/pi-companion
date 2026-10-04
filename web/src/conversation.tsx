@@ -310,7 +310,8 @@ function ToolLabel({ name }: { name: string }) {
 		case "read":
 		case "functions.read":
 			label = "Read";
-			path = "M5 3h10l4 4v14H5z M14 3v5h5 M8 12h8 M8 16h6";
+			path =
+				"M12 5C9 3 5 3 3 4v15c3-1 6-1 9 1 3-2 6-2 9-1V4c-2-1-6-1-9 1v15 M6 7h3 M6 10h3 M15 7h3 M15 10h3";
 			break;
 		case "edit":
 		case "functions.edit":
@@ -320,7 +321,19 @@ function ToolLabel({ name }: { name: string }) {
 		case "write":
 		case "functions.write":
 			label = "Write";
-			path = "M12 3H5v18h14v-7 M12 8h9 M17 3v10 M8 16h6";
+			path =
+				"m14 3 7 7-9 9-9 2 2-9z M12 5l7 7 M3 21l7-7 M12 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2";
+			break;
+		case "subagent":
+		case "functions.subagent":
+			label = "Subagent";
+			path =
+				"M12 3v4 M10 3h4 M5 7h14v13H5z M2 11v5 M22 11v5 M8 11h1 M15 11h1 M9 16h6";
+			break;
+		case "codemode":
+		case "functions.codemode":
+			label = "Codemode";
+			path = "M7 4H5v5l-2 3 2 3v5h2 M17 4h2v5l2 3-2 3v5h-2 M10 8l6 4-6 4z";
 			break;
 		case "bash":
 		case "functions.bash":

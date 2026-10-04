@@ -5547,6 +5547,49 @@ for (const width of [320, 390, 900])
 				exact: true,
 			}),
 		).toBeVisible();
+		for (const [name, label, path] of [
+			[
+				"subagent",
+				"Subagent",
+				"M12 3v4 M10 3h4 M5 7h14v13H5z M2 11v5 M22 11v5 M8 11h1 M15 11h1 M9 16h6",
+			],
+			[
+				"codemode",
+				"Codemode",
+				"M7 4H5v5l-2 3 2 3v5h2 M17 4h2v5l2 3-2 3v5h-2 M10 8l6 4-6 4z",
+			],
+			[
+				"write",
+				"Write",
+				"m14 3 7 7-9 9-9 2 2-9z M12 5l7 7 M3 21l7-7 M12 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2",
+			],
+		] as const) {
+			for (const tool of [name, `functions.${name}`]) {
+				await append([
+					{
+						id: `icon-${tool}`,
+						role: `tool: ${tool}`,
+						blocks: [{ type: "text", text: "Native icon fixture output" }],
+					},
+				]);
+				const row = page.locator(`[data-native-item="icon-${tool}"]`);
+				await expect(row.locator(".tool-label")).toHaveText(label);
+				await expect(row.locator(".tool-icon")).toHaveAttribute(
+					"aria-hidden",
+					"true",
+				);
+				await expect(row.locator(".tool-icon path")).toHaveAttribute("d", path);
+				await expect(row.locator("summary")).toHaveAccessibleName(
+					`${label} (${tool}) · output`,
+				);
+			}
+		}
+		await page
+			.locator('[data-native-item="icon-subagent"]')
+			.scrollIntoViewIfNeeded();
+		await page.screenshot({
+			path: testInfo.outputPath(`tool-icons-${width}.png`),
+		});
 		expect(posts).toEqual([]);
 	});
 
