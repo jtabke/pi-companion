@@ -354,32 +354,47 @@ function App() {
 							×
 						</button>
 					</div>
-					<SessionList
-						sessions={view.sessions}
-						selected={selected}
-						connected={
-							transport === "Connected" && view.connection !== "unavailable"
-						}
-						onChoose={(instance) => {
-							choose(instance);
-							closeSessions();
-						}}
-					/>
-					{selected && (
-						<button
-							onClick={() => {
-								choose("");
-								closeSessions();
-							}}
-						>
-							Leave session
-						</button>
-					)}
 					{selected && (
 						<section
 							className="session-rename"
 							aria-label="Rename selected session"
 						>
+							<p className="selected-session-name">
+								Selected: <strong>{sessionName}</strong>
+							</p>
+							{(modelName || snapshot?.context) && (
+								<div
+									className="session-metadata"
+									role="group"
+									aria-label="Model and context"
+								>
+									{modelName && (
+										<span className="model-name" title={modelName}>
+											{modelName}
+										</span>
+									)}
+									{snapshot?.context && (
+										<span
+											className="context-usage"
+											title="Estimated native context usage / token limit"
+											aria-label={
+												snapshot.context.tokens === null
+													? `Context usage unknown, ${snapshot.context.window.toLocaleString()} token limit`
+													: undefined
+											}
+										>
+											{snapshot.context.tokens === null
+												? "?"
+												: Math.round(
+														(snapshot.context.tokens /
+															snapshot.context.window) *
+															100,
+													)}
+											%/{snapshot.context.window.toLocaleString()}
+										</span>
+									)}
+								</div>
+							)}
 							<button
 								ref={renameButton}
 								disabled={!canRename}
@@ -437,6 +452,27 @@ function App() {
 							)}
 						</section>
 					)}
+					<SessionList
+						sessions={view.sessions}
+						selected={selected}
+						connected={
+							transport === "Connected" && view.connection !== "unavailable"
+						}
+						onChoose={(instance) => {
+							choose(instance);
+							closeSessions();
+						}}
+					/>
+					{selected && (
+						<button
+							onClick={() => {
+								choose("");
+								closeSessions();
+							}}
+						>
+							Leave session
+						</button>
+					)}
 					{selected && (
 						<section className="input-details" aria-label="Input details">
 							<h3>Input details</h3>
@@ -445,7 +481,9 @@ function App() {
 							{inputNotice?.routine && (
 								<p role="status">{inputNotice.message}</p>
 							)}
-							{inputReceipt?.routine && <ActionReceipt {...inputReceipt} />}
+							{inputReceipt?.routine && !inputReceipt.deliverAs && (
+								<ActionReceipt {...inputReceipt} />
+							)}
 							{stopReceipt?.routine && <ActionReceipt {...stopReceipt} />}
 						</section>
 					)}
@@ -713,6 +751,18 @@ function App() {
 							summary={selectedSummary}
 						/>
 					)}
+				{paired &&
+					selected &&
+					inputReceipt?.routine &&
+					inputReceipt.deliverAs && (
+						<section
+							className="browser-input-receipt"
+							aria-label="Latest browser request"
+						>
+							<p className="receipt-caption">Latest browser request</p>
+							<ActionReceipt {...inputReceipt} />
+						</section>
+					)}
 			</ChatViewport>
 			<Composer
 				paired={paired}
@@ -748,37 +798,6 @@ function App() {
 				observedQuestions={observedQuestions}
 				onReviewQuestions={() => setQuestionReview((value) => value + 1)}
 			/>
-			{paired && selected && (modelName || snapshot?.context) && (
-				<div
-					className="session-metadata"
-					role="group"
-					aria-label="Model and context"
-				>
-					{modelName && (
-						<span className="model-name" title={modelName}>
-							{modelName}
-						</span>
-					)}
-					{snapshot?.context && (
-						<span
-							className="context-usage"
-							title="Estimated native context usage / token limit"
-							aria-label={
-								snapshot.context.tokens === null
-									? `Context usage unknown, ${snapshot.context.window.toLocaleString()} token limit`
-									: undefined
-							}
-						>
-							{snapshot.context.tokens === null
-								? "?"
-								: Math.round(
-										(snapshot.context.tokens / snapshot.context.window) * 100,
-									)}
-							%/{snapshot.context.window.toLocaleString()}
-						</span>
-					)}
-				</div>
-			)}
 		</main>
 	);
 }

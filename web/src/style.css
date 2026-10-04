@@ -1,4 +1,7 @@
 :root {
+	/* Keep Safari rotation from inflating text; browser zoom remains available. */
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
 	color-scheme: light dark;
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 	line-height: 1.6;
@@ -522,6 +525,7 @@ summary {
 	color: var(--muted);
 }
 .composer-bar {
+	position: relative;
 	flex-shrink: 0;
 	display: flex;
 	align-items: flex-end;
@@ -602,35 +606,27 @@ summary {
 	display: none;
 }
 .send-options {
-	flex: 0 0 44px;
+	position: absolute;
+	top: auto;
+	bottom: 100%;
+	left: auto;
+	right: 4px;
+	width: max-content;
+	max-width: calc(100% - 8px);
 	margin: 0;
-	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--ink);
+	overflow: visible;
 }
 .composer:has(.send-options[open]) {
-	padding-top: max(54px, calc(1.05rem + 28px));
+	padding-top: max(50px, calc(1.05rem + 16px));
 	max-height: calc(var(--visible-height, 100dvh) * 0.45 + 24px);
 }
-.send-options summary {
-	display: grid;
-	place-items: center;
-	width: 44px;
-	min-height: 44px;
-	margin-left: auto;
-	padding: 0;
-	font-size: 1.5rem;
-	line-height: 24px;
-	border-radius: 12px;
-	list-style: none;
-}
-.send-options summary::-webkit-details-marker {
-	display: none;
-}
 .busy-text-controls {
-	position: absolute;
-	top: 2px;
-	right: 4px;
 	display: grid;
-	padding: 4px;
+	padding: 2px;
 	border: 1px solid var(--line);
 	border-radius: 12px;
 	background: var(--surface);
@@ -639,7 +635,7 @@ summary {
 	font-size: 0.875rem;
 	line-height: 1.2;
 	min-height: 44px;
-	padding: 8px 4px;
+	padding: 4px;
 	white-space: nowrap;
 }
 .input-details .action-receipt {
@@ -710,6 +706,32 @@ summary {
 }
 .action-receipt summary {
 	padding: 8px 0;
+}
+.browser-input-receipt {
+	margin: 8px 0;
+	padding: 8px 12px;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+}
+.browser-input-receipt .action-receipt {
+	margin: 0;
+	font-size: 0.875rem;
+}
+.receipt-caption {
+	font-size: 0.8125rem;
+	color: var(--muted);
+}
+.action-receipt .receipt-preview {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	overflow: hidden;
+	margin-top: 4px;
+	color: var(--ink);
+}
+.receipt-preview,
+.receipt-text {
+	white-space: pre-wrap;
 }
 .composer-notices > p.input-notice {
 	margin: 4px 8px;
@@ -947,20 +969,16 @@ pre:focus-visible,
 }
 .session-metadata {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: baseline;
-	flex-shrink: 0;
-	gap: 12px;
+	gap: 4px 8px;
 	min-width: 0;
-	margin: 2px 8px 0;
-	font-size: 0.75rem;
-	line-height: 1.4;
+	font-size: 0.875rem;
 	color: var(--muted);
 }
 .session-metadata .model-name {
 	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	overflow-wrap: anywhere;
 }
 .session-metadata .context-usage {
 	flex-shrink: 0;
@@ -1148,6 +1166,13 @@ pre:focus-visible,
 	}
 }
 .sidebar-heading {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	margin: -12px -12px 8px;
+	padding: max(12px, env(safe-area-inset-top)) 12px 8px;
+	background: var(--canvas);
+	border-bottom: 1px solid var(--line);
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -1161,6 +1186,19 @@ pre:focus-visible,
 	width: 44px;
 	padding: 0;
 	font-size: 1.5rem;
+}
+.session-rename {
+	margin-bottom: 12px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--line);
+}
+.selected-session-name {
+	font-size: 0.875rem;
+	color: var(--muted);
+}
+.selected-session-name strong {
+	color: var(--ink);
+	font-weight: 500;
 }
 .session-home {
 	flex: 1;
@@ -1336,6 +1374,48 @@ pre:focus-visible,
 	outline-offset: -3px;
 }
 
+/* Give a real draft reading width, rather than squeezing it between actions. */
+@media (max-width: 639px) {
+	.composer-bar[data-draft="true"] {
+		display: grid;
+		grid-template-columns: 44px 1fr auto auto;
+		gap: 4px;
+	}
+	.composer-bar[data-draft="true"] textarea {
+		grid-column: 1 / -1;
+		grid-row: 1;
+		width: 100%;
+	}
+	.composer-bar[data-draft="true"] .attachment-picker {
+		grid-column: 1;
+		grid-row: 2;
+	}
+	.composer-bar[data-draft="true"] .stop-button {
+		grid-column: 3;
+		grid-row: 2;
+	}
+	.composer-bar[data-draft="true"] .send-button {
+		grid-column: 4;
+		grid-row: 2;
+	}
+	.composer:has([data-draft="true"]) {
+		max-height: max(calc(var(--visible-height, 100dvh) * 0.45), 136px);
+	}
+	.composer:has([data-draft="true"]):has(.send-options[open]) {
+		max-height: max(calc(var(--visible-height, 100dvh) * 0.45 + 54px), 190px);
+	}
+	/* Remove only inter-item space; retain every disclosure and copy target. */
+	.message:has(.thinking-disclosure) {
+		margin-bottom: 4px;
+	}
+	.message:has(+ .tool-stack) {
+		margin-bottom: 4px;
+	}
+	.tool-stack {
+		margin-bottom: 4px;
+	}
+}
+
 /* Local image feedback needs room for both its preview and the conversation;
    let a long draft scroll instead of consuming the whole composer budget. */
 @container chat-shell (350px < height <= 450px) {
@@ -1349,19 +1429,28 @@ pre:focus-visible,
 	.composer:has(.composer-notices > :not(.visually-hidden):not([hidden])) {
 		min-height: calc(109px + 1.2rem);
 	}
+	@media (max-width: 639px) {
+		.composer-bar[data-draft="true"] {
+			padding-block: 0;
+			row-gap: 0;
+		}
+		.composer:has([data-draft="true"]):has(.send-options[open]) {
+			max-height: calc(94px + max(50px, calc(1.05rem + 16px)));
+		}
+	}
 	/* Options and safety notices share the row above the editor, never overlap. */
 	.composer:has(.send-options[open]) {
 		padding-top: 2px;
 		max-height: max(
 			calc(var(--visible-height, 100dvh) * 0.45 + 24px),
-			calc(108px + max(54px, calc(1.05rem + 28px)))
+			calc(108px + max(50px, calc(1.05rem + 16px)))
 		);
 	}
 	.composer:has(.send-options[open]) .composer-notices {
 		margin-right: 50%;
-		min-height: max(54px, calc(1.05rem + 28px));
+		min-height: max(50px, calc(1.05rem + 16px));
 	}
-	.composer:has(.send-options[open]) .busy-text-controls {
+	.composer:has(.send-options[open]) .send-options {
 		width: calc(50% - 8px);
 	}
 	.composer:has(.send-options[open]) .busy-text-controls button {

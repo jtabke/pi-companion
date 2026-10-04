@@ -134,7 +134,11 @@ export function useBrowserSession({
 		| undefined
 	>(undefined);
 	type Notice = { identity: Identity; message: string; routine?: boolean };
-	type ActionReceipt = Notice & { requestId: string };
+	type ActionReceipt = Notice & {
+		requestId: string;
+		text?: string;
+		deliverAs?: TextRequest["deliverAs"];
+	};
 	const [operating, setOperating] = useState(false);
 	const [inputNotice, setInputNotice] = useState<Notice>();
 	const [inputReceipt, setInputReceipt] = useState<ActionReceipt>();
@@ -146,7 +150,12 @@ export function useBrowserSession({
 		if (identity) setInputNotice({ identity, message, routine });
 	}
 	function inputResult(
-		attempt: { identity: Identity; requestId: string },
+		attempt: {
+			identity: Identity;
+			requestId: string;
+			text?: string;
+			deliverAs?: TextRequest["deliverAs"];
+		},
 		message: string,
 		routine = false,
 	) {
@@ -155,6 +164,9 @@ export function useBrowserSession({
 			requestId: attempt.requestId,
 			message,
 			routine,
+			...(routine && attempt.deliverAs
+				? { text: attempt.text, deliverAs: attempt.deliverAs }
+				: {}),
 		});
 	}
 	const [outstanding, setOutstanding] = useState<

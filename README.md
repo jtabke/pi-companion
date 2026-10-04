@@ -35,10 +35,13 @@ replacement for Pi's terminal, tools, extensions or conversation storage.
 ## Browser input
 
 The composer starts with +, text and Send on one compact row inside a rounded
-surface. Single-line text is centered beside the controls, including short keyboard layouts;
-text grows upward as it wraps and scrolls natively after a height cap. The shell follows the
+surface. On screens narrower than 640px, a nonempty draft gets a full-width editor
+above the action row; clearing the draft restores the compact row. Text grows upward
+as it wraps and scrolls natively after a height cap. The shell follows the
 browser's reported visual viewport at normal zoom and rechecks it on window resize and
-page restoration. Uncertain input uses one outcome receipt with Details and explicit Retry;
+page restoration. Text sizing stays at 100% to prevent Safari's automatic rotation
+inflation; pinch zoom and explicit text enlargement remain available.
+Uncertain input uses one outcome receipt with Details and explicit Retry;
 a simultaneous browser-control blocker remains separate. Notices scroll within a bounded
 area rather than pushing the editor offscreen.
 Picking multiple images or pasting repeatedly appends local thumbnails in a horizontal
@@ -70,22 +73,34 @@ Unknown languages and code over 100,000 characters stay plain text; shell logs a
 Edit/Write receipts are not interpreted as source code. Highlighting does not change copied text.
 Copy answer copies the displayed answer's Markdown text, not reasoning or tool output;
 shortened answers remain previews, not the full native history. Code copying stays separate.
-A compact read-only row below the composer shows the model name without its provider
-and estimated context usage as `70%/272,000`. Long model names shorten visually; the full
-name remains available as text to assistive technology. Unknown usage shows `?%` rather
+A read-only label below the selected session name in the sessions drawer shows the model
+name without its provider and estimated context usage as `70%/272,000`. Long model names
+wrap so the full name remains readable. Unknown usage shows `?%` rather
 than zero; no child-inclusive cost total is inferred.
 Markdown tables keep readable natural column widths in a separate horizontal scroll area,
 with Left/Right-arrow controls when that area is focused. They do not widen the page.
 
-When Pi is busy, **Send** or unmodified **Enter** requests **Steer**, matching Pi's
-terminal default. Hold Send for 500ms to open **Follow-up**, or use the **Send options**
-control or **Alt+Enter**. Opening the options sends nothing. **Shift+Enter** inserts a
+The send button uses an arrow in both idle and busy states. While Pi is busy, its
+accessible label is **Steer**; tapping it or pressing unmodified **Enter** requests
+Steer, matching Pi's terminal default. Hold the arrow for 500ms to open **Follow-up**,
+then choose Follow-up to send. There is no separate More button. Keyboard users can
+press **Arrow Down** on Send to open the same choice, **Escape** to close it, or
+**Alt+Enter** in the editor to request Follow-up directly.
+Opening the choice or releasing a hold sends nothing. **Shift+Enter** inserts a
 newline; Stop stays separate. Pi owns steering boundaries and follow-up timing;
 these requests do not interrupt a running tool.
+Steer uses Pi's next steering boundary; Follow-up waits until after the current run.
+This guidance does not reserve conversation or composer space. The latest successful browser Steer/Follow-up request
+has one receipt with a compact text preview and expandable full text, mode and request
+identity. It replaces the prior receipt; it is not another transcript or Pi's live queue.
+The receipt remains an observation of dispatch, not confirmation that the message is
+still waiting or was consumed. It is kept only in memory and disappears on page reload.
 Status says **requested**, not confirmed queued or processed. Multiple deliberate requests
 are allowed. Lost responses retain the original ID/text/mode for explicit retry; refreshing
 or reconnecting never resends input. Busy image attachments remain local and must be
-removed before requesting busy text.
+removed before requesting busy text. Their routine explanation stays in Input details
+and the editor's accessible description, not above the thumbnails. Safety and error
+notices remain visible.
 
 While Pi is idle, type `/` for suggestions from that selected session. Tap a supported
 prompt template or skill, or use Arrow keys and Enter/Tab to select, then tap **Send**.
@@ -101,8 +116,9 @@ slash execution, and may safely reject the new multi-image envelope until restar
 
 ## Rename a session
 
-Open **Live sessions**, choose **Rename session**, edit the native name, then select
-**Save** or **Cancel**. Names must be nonblank and at most 120 UTF-16 units. Save uses
+Open **Live sessions**. The drawer heading and Close remain available while its contents
+scroll. The selected session's name and **Rename session** appear above the terminal list.
+Choose **Rename session**, edit the native name, then select **Save** or **Cancel**. Names must be nonblank and at most 120 UTF-16 units. Save uses
 Pi's public session-name API, not model input or a browser name store. Older bridges
 without rename support do not offer the action.
 
@@ -188,14 +204,14 @@ and private state. There is no widget mirror, action API, display history or ext
 This currently runs **from a development checkout**, not a standalone published
 package. Have a local checkout of this repository before following the steps below.
 
-| Requirement           | Current support and setup                                                                                                                                                                                                                                                                                                                                 |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Requirement           | Current support and setup                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Pi                    | **0.99.2** is the earlier checked baseline; **1.0.1** is checked against the installed host's public bridge APIs, local fixtures and read-only live observations. Install Pi and authenticate/configure its provider separately; `pi` must be on your PATH and work in your project terminal. See [Pi's official getting-started instructions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/README.md#getting-started). Do not infer support for the latest Pi version. |
-| Node.js and npm       | Tested with **Node 26.5.0 and npm 11.17.0**. Node 24 is a proposed baseline, not runtime-verified.                                                                                                                                                                                                                                                        |
-| Operating system      | Tested on **macOS**. Linux/Windows compatibility is not established.                                                                                                                                                                                                                                                                                      |
-| Native build tools    | A compiler/toolchain for the required `fs-ext` native build (on macOS, Xcode Command Line Tools).                                                                                                                                                                                                                                                         |
-| Python                | **Python 3**, used by the declaration-link bootstrap below and the native build tooling.                                                                                                                                                                                                                                                                  |
-| Optional phone access | Tailscale installed and signed in on the computer and phone, both on the same tailnet, with access restricted to the owner. HTTPS feature consent may be required.                                                                                                                                                                                        |
+| Node.js and npm       | Tested with **Node 26.5.0 and npm 11.17.0**. Node 24 is a proposed baseline, not runtime-verified.                                                                                                                                                                                                                                                                                                                                                                                              |
+| Operating system      | Tested on **macOS**. Linux/Windows compatibility is not established.                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Native build tools    | A compiler/toolchain for the required `fs-ext` native build (on macOS, Xcode Command Line Tools).                                                                                                                                                                                                                                                                                                                                                                                               |
+| Python                | **Python 3**, used by the declaration-link bootstrap below and the native build tooling.                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Optional phone access | Tailscale installed and signed in on the computer and phone, both on the same tailnet, with access restricted to the owner. HTTPS feature consent may be required.                                                                                                                                                                                                                                                                                                                              |
 
 The companion does not install Pi or set up provider credentials. Optional personal
 registration uses Pi's local-package command to add only this package to your resource

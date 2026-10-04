@@ -251,7 +251,19 @@ for (const width of [320, 390, 900])
 			)!;
 			const code = document.querySelector<HTMLElement>(".code-block pre")!;
 			const style = getComputedStyle(message);
+			const paragraphs = Array.from(message.querySelectorAll(":scope > p"));
+			const actions = message.querySelector<HTMLElement>(".answer-actions")!;
+			const copy = actions.querySelector("button")!;
 			return {
+				paragraphHeights: paragraphs.map(
+					(node) => node.getBoundingClientRect().height,
+				),
+				actionHeight: actions.getBoundingClientRect().height,
+				copyWidth: copy.getBoundingClientRect().width,
+				copyHeight: copy.getBoundingClientRect().height,
+				actionGap:
+					actions.getBoundingClientRect().top -
+					paragraphs.at(-1)!.getBoundingClientRect().bottom,
 				contentWidth: document
 					.querySelector(".chat-content")!
 					.getBoundingClientRect().width,
@@ -273,8 +285,22 @@ for (const width of [320, 390, 900])
 		expect(density.userInset).toBe(10);
 		expect(density.codeInset).toBe(8);
 		expect(density.messageGap).toBe(width === 900 ? 20 : 12);
+		// Native paragraphs retain their line count; Copy answer owns a distinct
+		// 44px target and the existing 4px paragraph margin, not decorative padding.
+		expect(density.paragraphHeights).toHaveLength(2);
+		expect(density.paragraphHeights[0]).toBeCloseTo(
+			width === 900 ? 25.6 : 51.2,
+			1,
+		);
+		expect(density.paragraphHeights[1]).toBeCloseTo(25.6, 1);
+		expect(density.actionHeight).toBe(44);
+		expect(density.copyWidth).toBe(44);
+		expect(density.copyHeight).toBe(44);
+		expect(density.actionGap).toBe(4);
 		expect(density.messageHeight).toBeCloseTo(
-			width === 900 ? 55.1875 : 80.78125,
+			density.paragraphHeights.reduce((total, height) => total + height, 0) +
+				8 +
+				density.actionHeight,
 			1,
 		);
 		expect(density.fontSize).toBe("16px");
@@ -300,7 +326,10 @@ for (const width of [320, 390, 900])
 			const draft = page.getByPlaceholder("Message Pi");
 			const bar = page.locator(".composer-bar");
 			const picker = page.locator(".attachment-picker");
-			const send = composer.getByRole("button", { name: "Send", exact: true });
+			const send = composer.getByRole("button", {
+				name: /^(Send|Steer)$/,
+				exact: true,
+			});
 			const states = [];
 			for (const [state, text] of [
 				["empty", ""],
@@ -354,21 +383,30 @@ for (const width of [320, 390, 900])
 				}
 			}
 			for (const boxes of states) {
-				expect(boxes.editor.x, boxes.state).toBeGreaterThanOrEqual(
-					boxes.picker.x + boxes.picker.width,
-				);
-				expect(boxes.editor.x + boxes.editor.width).toBeLessThanOrEqual(
-					boxes.send.x,
-				);
-				expect(boxes.editor.y + boxes.editor.height, boxes.state).toBe(
-					boxes.picker.y + boxes.picker.height,
-				);
+				const stacked =
+					width < 640 && !["empty", "cleared"].includes(boxes.state);
+				if (stacked) {
+					expect(boxes.editor.width, boxes.state).toBe(boxes.bar.width - 14);
+					expect(boxes.editor.y + boxes.editor.height).toBeLessThanOrEqual(
+						boxes.picker.y,
+					);
+				} else {
+					expect(boxes.editor.x, boxes.state).toBeGreaterThanOrEqual(
+						boxes.picker.x + boxes.picker.width,
+					);
+					expect(boxes.editor.x + boxes.editor.width).toBeLessThanOrEqual(
+						boxes.send.x,
+					);
+					expect(boxes.editor.y + boxes.editor.height, boxes.state).toBe(
+						boxes.picker.y + boxes.picker.height,
+					);
+				}
 				expect(boxes.picker.x - boxes.bar.x).toBe(7);
 				expect(
 					boxes.bar.x + boxes.bar.width - boxes.send.x - boxes.send.width,
 				).toBe(7);
 				if (["empty", "one-line", "shortened", "cleared"].includes(boxes.state))
-					expect(boxes.bar.height, boxes.state).toBe(58);
+					expect(boxes.bar.height, boxes.state).toBe(stacked ? 106 : 58);
 				expect(boxes.bar.y + boxes.bar.height).toBe(
 					states[0].bar.y + states[0].bar.height,
 				);
@@ -655,7 +693,7 @@ for (const width of [320, 390, 900])
 			await expect(draft).toHaveValue(draftText + "!");
 			for (const control of [
 				page.locator(".attachment-picker"),
-				composer.getByRole("button", { name: "Send", exact: true }),
+				composer.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 			]) {
 				const box = (await control.boundingBox())!;
 				expect(box.width).toBeGreaterThanOrEqual(44);
@@ -1156,7 +1194,7 @@ for (const width of [320, 390, 900])
 		});
 		await page.setViewportSize({ width, height: 844 });
 		await expect(
-			composer.getByRole("button", { name: "Send", exact: true }),
+			composer.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeVisible();
 		await expect(
 			composer.getByRole("button", { name: "Stop", exact: true }),
@@ -1815,10 +1853,10 @@ for (const width of [320, 390, 900])
 			composer.getByRole("button", { name: "Stop", exact: true }),
 		).toBeVisible();
 		await expect(
-			composer.getByRole("button", { name: "Send", exact: true }),
+			composer.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeVisible();
 		await expect(
-			composer.getByRole("button", { name: "Send", exact: true }),
+			composer.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeDisabled();
 		await expect(page.getByPlaceholder("Message Pi")).toHaveValue("");
 		await page.getByPlaceholder("Message Pi").fill("Other terminal draft");
@@ -2168,6 +2206,28 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 			exact: true,
 		}),
 	).toBeVisible();
+	await sidebar.evaluate((node) => {
+		node.scrollTop = node.scrollHeight;
+	});
+	expect(await sidebar.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+	const close = sidebar.getByRole("button", { name: "Close sessions" });
+	const closeBox = (await close.boundingBox())!;
+	expect(closeBox.y).toBeGreaterThanOrEqual(0);
+	expect(closeBox.y + closeBox.height).toBeLessThanOrEqual(568);
+	expect(
+		await close.evaluate((node) => {
+			const box = node.getBoundingClientRect();
+			return node.contains(
+				document.elementFromPoint(
+					box.x + box.width / 2,
+					box.y + box.height / 2,
+				),
+			);
+		}),
+	).toBe(true);
+	await sidebar.evaluate((node) => {
+		node.scrollTop = 0;
+	});
 	for (const cwd of [
 		"/workspace/team-a/Observed project",
 		"/workspace/team-b/Observed project",
@@ -3431,7 +3491,7 @@ for (const width of [320, 390])
 		);
 		await draft.fill("Local draft stays editable");
 		await expect(
-			page.getByRole("button", { name: "Send", exact: true }),
+			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeEnabled();
 		await expect(
 			page.locator("header").getByText("Pi idle", { exact: true }),
@@ -3559,15 +3619,26 @@ for (const width of [320, 390])
 			}
 			await expect(availability).toHaveClass("composer-availability");
 			await expect(availability).toBeVisible();
+			const editor = (await draft.boundingBox())!;
+			const send = (await page
+				.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
+				.boundingBox())!;
+			// Retained drafts may wrap when Stop narrows the editor at 320px.
+			expect(editor.height).toBeGreaterThanOrEqual(44);
+			expect(editor.height).toBeLessThanOrEqual(136);
 			expect((await page.locator(".composer-bar").boundingBox())!.height).toBe(
-				58,
+				Math.max(44, editor.height) + 14,
 			);
+			expect(editor.y + editor.height).toBe(send.y + send.height);
+			await page.screenshot({
+				path: testInfo.outputPath(`availability-${width}-${activity}.png`),
+			});
 			await expect(
-				page.getByLabel("Send options", { exact: true }),
+				page.getByLabel("More send options", { exact: true }),
 			).toHaveCount(0);
 			await expect(
 				page.getByRole("button", {
-					name: "Send",
+					name: /^(Send|Steer)$/,
 					exact: true,
 					includeHidden: true,
 				}),
@@ -4502,7 +4573,7 @@ for (const width of [320, 390])
 		for (const colorScheme of ["light", "dark"] as const) {
 			await page.emulateMedia({ colorScheme });
 			await composer
-				.getByRole("button", { name: "Send", exact: true })
+				.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
 				.scrollIntoViewIfNeeded();
 			expect(
 				await page.evaluate(
@@ -4521,7 +4592,7 @@ for (const width of [320, 390])
 				document.documentElement.style.fontSize = "125%";
 			});
 			await composer
-				.getByRole("button", { name: "Send", exact: true })
+				.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
 				.scrollIntoViewIfNeeded();
 			expect(
 				await page.evaluate(
@@ -4545,10 +4616,10 @@ for (const width of [320, 390])
 			"First line\nSecond line\nThird line\nFourth line\nFifth line\nSixth line",
 		);
 		await composer
-			.getByRole("button", { name: "Send", exact: true })
+			.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
 			.scrollIntoViewIfNeeded();
 		const sendBox = (await composer
-			.getByRole("button", { name: "Send", exact: true })
+			.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
 			.boundingBox())!;
 		expect(sendBox.y + sendBox.height).toBeLessThanOrEqual(420);
 		expect(
@@ -4560,7 +4631,7 @@ for (const width of [320, 390])
 			80,
 		);
 		for (const control of [
-			composer.getByRole("button", { name: "Send", exact: true }),
+			composer.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 			remove,
 		]) {
 			const box = (await control.boundingBox())!;
@@ -5602,6 +5673,8 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 		generation: "b".repeat(32),
 		project: "Pi Companion",
 		session: "Focus session",
+		model: "fixture/model",
+		context: { tokens: 12_800, window: 128_000 },
 		parent: "idle" as const,
 		background: "unobserved" as const,
 	};
@@ -5707,8 +5780,42 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 		exact: true,
 	});
 	const attachment = page.getByLabel("Images for selected Pi (local picker)");
-	const send = page.getByRole("button", { name: "Send", exact: true });
+	const send = page.getByRole("button", {
+		name: /^(Send|Steer)$/,
+		exact: true,
+	});
 	const bar = page.locator(".composer-bar");
+	async function checkTextAlignment() {
+		// A nonempty mobile draft owns the full row above the action targets.
+		await expect
+			.poll(() =>
+				draft.evaluate((node) => {
+					const editor = node.getBoundingClientRect();
+					const control = node
+						.closest(".composer-bar")!
+						.querySelector(".send-button")!
+						.getBoundingClientRect();
+					const surface = node.closest<HTMLElement>(".composer-bar")!;
+					if (surface.dataset.draft === "true" && innerWidth < 640) {
+						return (
+							Math.abs(editor.width - surface.clientWidth + 12) <= 0.5 &&
+							editor.bottom <= control.y
+						);
+					}
+					const style = getComputedStyle(node);
+					const line = parseFloat(style.lineHeight);
+					const padding =
+						parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+					if (editor.height <= Math.max(44, line + padding) + 0.5) {
+						const textCenter =
+							editor.y + parseFloat(style.paddingTop) + line / 2;
+						return Math.abs(textCenter - control.y - control.height / 2) <= 0.5;
+					}
+					return editor.bottom === control.bottom;
+				}),
+			)
+			.toBe(true);
+	}
 	// A simulated short keyboard shell constrains height, never editor width.
 	const keyboardStates = [];
 	for (const width of [320, 390]) {
@@ -5752,9 +5859,16 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 		}
 	}
 	for (const geometry of keyboardStates) {
-		expect(geometry.editor.x + geometry.editor.width).toBeLessThanOrEqual(
-			geometry.send.x,
-		);
+		if (geometry.state === "empty")
+			expect(geometry.editor.x + geometry.editor.width).toBeLessThanOrEqual(
+				geometry.send.x,
+			);
+		else {
+			expect(geometry.editor.width).toBe(geometry.bar.width - 14);
+			expect(geometry.editor.y + geometry.editor.height).toBeLessThanOrEqual(
+				geometry.send.y,
+			);
+		}
 		expect(geometry.editor.y + geometry.editor.height).toBeLessThanOrEqual(
 			geometry.send.y + geometry.send.height,
 		);
@@ -5942,26 +6056,38 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 				{ parent, stopping },
 			);
 			await expect(draft).toHaveValue(retained);
-			await expect
-				.poll(async () => {
-					const surface = (await bar.boundingBox())!;
-					const editor = (await draft.boundingBox())!;
-					return surface.height - editor.height;
-				})
-				.toBe(14);
-			const surface = (await bar.boundingBox())!;
-			const editor = (await draft.boundingBox())!;
-			const sendBox = (await send.boundingBox())!;
-			{
-				expect(editor.x + editor.width).toBeLessThanOrEqual(sendBox.x);
-				expect(editor.y + editor.height).toBe(sendBox.y + sendBox.height);
-			}
-			for (const control of [
-				attachment,
-				send,
-				...(parent === "working" ? [stop] : []),
-			]) {
-				const box = (await control.boundingBox())!;
+			await expect(page.locator("header .parent-status")).toHaveText(
+				stopping ? "Stopping" : parent === "idle" ? "Pi idle" : "Pi is working",
+			);
+			await checkTextAlignment();
+			// One layout read prevents mixing pre-resize shell coordinates with
+			// post-resize controls while the visual viewport owner settles.
+			const {
+				surface,
+				editor,
+				send: sendBox,
+				controls,
+			} = await bar.evaluate((node) => {
+				const box = (element: Element) => {
+					const { x, y, width, height } = element.getBoundingClientRect();
+					return { x, y, width, height };
+				};
+				return {
+					surface: box(node),
+					editor: box(node.querySelector("textarea")!),
+					send: box(node.querySelector(".send-button")!),
+					controls: Array.from(
+						node.querySelectorAll(
+							".attachment-picker, .send-button, .stop-button:not([hidden])",
+						),
+						box,
+					),
+				};
+			});
+			expect(surface.height - editor.height).toBe(62);
+			expect(editor.width).toBe(surface.width - 14);
+			expect(editor.y + editor.height).toBeLessThanOrEqual(sendBox.y);
+			for (const box of controls) {
 				expect(box.width).toBeGreaterThanOrEqual(44);
 				expect(box.height).toBeGreaterThanOrEqual(44);
 				expect(box.y + box.height).toBeLessThanOrEqual(
@@ -6048,8 +6174,11 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					const sendBox = (await send.boundingBox())!;
 					const editor = (await draft.boundingBox())!;
 					const surface = (await bar.boundingBox())!;
-					expect(editor.x + editor.width).toBeLessThanOrEqual(sendBox.x);
-					expect(editor.y + editor.height).toBe(sendBox.y + sendBox.height);
+					if (text) {
+						expect(editor.width).toBe(surface.width - 14);
+						expect(editor.y + editor.height).toBeLessThanOrEqual(sendBox.y);
+					} else expect(editor.x + editor.width).toBeLessThanOrEqual(sendBox.x);
+					await checkTextAlignment();
 					if (!text && !enlarged) expect(surface.height).toBe(58);
 					expect(
 						await page
@@ -6095,7 +6224,7 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					});
 					if (parent === "working" && !stopping) {
 						await draft.focus();
-						if (text) await page.keyboard.press(tab); // Send options precedes Stop.
+
 						await page.keyboard.press(tab);
 						await expect(stop).toBeFocused();
 						await record(`${width}-${theme}-${state}-stop`, stop, bar);
@@ -6113,7 +6242,7 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 									`chrome-${width}-${theme}-${enlarged ? "125" : "ordinary"}-send-focus.png`,
 								),
 							});
-							await page.getByLabel("Send options", { exact: true }).click();
+							await send.press("ArrowDown");
 							await expect(
 								page.getByRole("button", { name: "Follow-up", exact: true }),
 							).toBeVisible();
@@ -6122,7 +6251,7 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 									`chrome-${width}-${theme}-${enlarged ? "125" : "ordinary"}-options.png`,
 								),
 							});
-							await page.getByLabel("Send options", { exact: true }).click();
+							await page.keyboard.press("Escape");
 						}
 					}
 				}
@@ -6168,14 +6297,13 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 				page.getByRole("button", { name: "Jump to latest" }),
 			).toBeVisible();
 			for (const open of [false, true]) {
-				if (open)
-					await page.getByLabel("Send options", { exact: true }).click();
+				if (open) await send.press("ArrowDown");
 				for (const theme of ["light", "dark"] as const) {
 					await page.emulateMedia({ colorScheme: theme });
 					const targets = [
 						send,
 						stop,
-						page.getByLabel("Send options", { exact: true }),
+
 						page.getByRole("button", { name: "Jump to latest" }),
 					];
 					if (open)
@@ -6244,18 +6372,33 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					expect(reader.width).toBe(
 						(await page.locator(".chat-frame").boundingBox())!.width,
 					);
+					const nativeEditor = await draft.evaluate((node) => {
+						const style = getComputedStyle(node);
+						node.scrollTop = node.scrollHeight;
+						return {
+							lineHeight: parseFloat(style.lineHeight),
+							contentHeight:
+								node.clientHeight -
+								parseFloat(style.paddingTop) -
+								parseFloat(style.paddingBottom),
+							clientHeight: node.clientHeight,
+							scrollHeight: node.scrollHeight,
+							scrollTop: node.scrollTop,
+						};
+					});
+					console.log(
+						"CONSTRAINED_NATIVE_EDITOR",
+						JSON.stringify({ browserName, width, size, open, ...nativeEditor }),
+					);
+					expect(nativeEditor.scrollHeight).toBeGreaterThan(
+						nativeEditor.clientHeight,
+					);
+					// WebKit serializes 1.2em as 38.400002px at 200% while
+					// matching padding uses 38.4px. Compare at subpixel precision.
 					expect(
-						await draft.evaluate((node) => {
-							const style = getComputedStyle(node);
-							return (
-								node.scrollHeight > node.clientHeight &&
-								parseFloat(style.lineHeight) <=
-									node.clientHeight -
-										parseFloat(style.paddingTop) -
-										parseFloat(style.paddingBottom)
-							);
-						}),
-					).toBe(true);
+						Math.round(nativeEditor.contentHeight * 1000),
+					).toBeGreaterThanOrEqual(Math.round(nativeEditor.lineHeight * 1000));
+					expect(nativeEditor.scrollTop).toBeGreaterThan(0);
 					expect(
 						await page.evaluate(
 							() => document.documentElement.scrollWidth <= innerWidth,
@@ -6286,8 +6429,7 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 						),
 					});
 				}
-				if (open)
-					await page.getByLabel("Send options", { exact: true }).click();
+				if (open) await page.keyboard.press("Escape");
 			}
 			for (const [changes, reason] of [
 				[{ parent: "working", busyText: false }, "fully restart the owning Pi"],
@@ -6477,7 +6619,10 @@ for (const input of ["mouse", "touch"] as const)
 			);
 			await page.goto("/");
 			await chooseSession(page, summary.instance);
-			const send = page.getByRole("button", { name: "Send", exact: true });
+			const send = page.getByRole("button", {
+				name: /^(Send|Steer)$/,
+				exact: true,
+			});
 			await expect(send).toBeDisabled();
 			const disabled = await send.evaluate((node) => ({
 				opacity: getComputedStyle(node).opacity,
@@ -6575,180 +6720,243 @@ for (const input of ["mouse", "touch"] as const)
 		}
 	});
 
-for (const width of [320, 390])
-	test(`mobile viewport lifecycle and native text alignment at ${width}px`, async ({
-		page,
-	}, testInfo) => {
-		await page.setViewportSize({ width, height: 844 });
-		const owner = {
-			instance: "a".repeat(32),
-			generation: "b".repeat(32),
-			session: "Viewport fixture",
-			project: "Layout",
-			parent: "idle",
-			background: "unobserved",
-		};
-		await page.route("**/api/snapshot", (route) =>
-			route.fulfill({ json: { connection: "connected", sessions: [owner] } }),
-		);
-		await page.addInitScript((owner) => {
-			class Source extends EventTarget {
-				onopen = null;
-				onerror = null;
-				constructor() {
-					super();
-					queueMicrotask(() =>
-						this.dispatchEvent(
-							new MessageEvent("snapshot", {
-								data: JSON.stringify({
-									connection: "connected",
-									sessions: [owner],
-									selected: owner,
-									snapshot: {
-										...owner,
-										items: [],
-										truncated: false,
-										omittedItems: 0,
-									},
+test.describe("mobile viewport sizing", () => {
+	test.use({ isMobile: true, hasTouch: true });
+	for (const width of [320, 390])
+		test(`mobile viewport lifecycle and native text alignment at ${width}px`, async ({
+			page,
+		}, testInfo) => {
+			await page.setViewportSize({ width, height: 844 });
+			const owner = {
+				instance: "a".repeat(32),
+				generation: "b".repeat(32),
+				session: "Viewport fixture",
+				project: "Layout",
+				parent: "idle",
+				background: "unobserved",
+			};
+			await page.route("**/api/snapshot", (route) =>
+				route.fulfill({ json: { connection: "connected", sessions: [owner] } }),
+			);
+			await page.addInitScript((owner) => {
+				class Source extends EventTarget {
+					onopen = null;
+					onerror = null;
+					constructor() {
+						super();
+						queueMicrotask(() =>
+							this.dispatchEvent(
+								new MessageEvent("snapshot", {
+									data: JSON.stringify({
+										connection: "connected",
+										sessions: [owner],
+										selected: owner,
+										snapshot: {
+											...owner,
+											items: [
+												{
+													id: "rotation-text",
+													role: "assistant",
+													blocks: [
+														{
+															type: "text",
+															text: "Keep text readable after rotation. Review the same message without losing your place. ".repeat(
+																8,
+															),
+														},
+													],
+												},
+											],
+											truncated: false,
+											omittedItems: 0,
+										},
+									}),
 								}),
-							}),
-						),
-					);
-				}
-				close() {}
-			}
-			Object.defineProperty(window, "EventSource", { value: Source });
-			const viewport = Object.assign(new EventTarget(), {
-				height: 844,
-				offsetTop: 0,
-				scale: 1,
-			});
-			Object.defineProperty(window, "visualViewport", { value: viewport });
-			Object.defineProperty(window, "setViewportMetrics", {
-				value: (
-					height: number,
-					offsetTop: number,
-					event: string,
-					scale = 1,
-				) => {
-					Object.assign(viewport, { height, offsetTop, scale });
-					if (event === "resize" || event === "scroll")
-						viewport.dispatchEvent(new Event(event));
-					else if (event === "visibilitychange")
-						document.dispatchEvent(new Event(event));
-					else
-						window.dispatchEvent(
-							new Event(event === "window-resize" ? "resize" : event),
+							),
 						);
-				},
-			});
-		}, owner);
-		await page.goto("/");
-		await chooseSession(page, owner.instance);
-		const draft = page.getByLabel("Text for selected Pi (local draft)");
-		await page
-			.getByLabel("Images for selected Pi (local picker)")
-			.setInputFiles({ name: "local.png", mimeType: "image/png", buffer: png });
-		await draft.fill("Hello Pi");
-		async function metrics(
-			height: number,
-			top: number,
-			event: string,
-			scale = 1,
-		) {
-			await page.evaluate(
-				({ height, top, event, scale }) =>
-					(
-						window as unknown as {
-							setViewportMetrics: (
-								h: number,
-								t: number,
-								e: string,
-								s: number,
-							) => void;
-						}
-					).setViewportMetrics(height, top, event, scale),
-				{ height, top, event, scale },
-			);
-		}
-		async function checkBounds(height: number, top: number) {
-			await expect
-				.poll(async () => (await page.locator("main").boundingBox())!.height)
-				.toBe(height);
-			const header = (await page.locator("header").boundingBox())!;
-			const composer = (await page.locator(".composer").boundingBox())!;
-			expect(header.y).toBeGreaterThanOrEqual(top);
-			expect(header.y + header.height).toBeLessThanOrEqual(top + height);
-			const gap = top + height - composer.y - composer.height;
-			expect(gap).toBeGreaterThanOrEqual(0);
-			expect(gap).toBeLessThanOrEqual(24);
-			console.log(
-				"VISIBLE_VIEWPORT_GEOMETRY",
-				JSON.stringify({ width, height, top, header, composer, gap }),
-			);
-		}
-		for (const textSize of ["100%", "125%"]) {
-			await page.evaluate((size) => {
-				document.documentElement.style.fontSize = size;
-			}, textSize);
-			for (const [height, top] of [
-				[400, 42],
-				[300, 64],
-			]) {
-				await metrics(height, top, "resize");
-				await checkBounds(height, top);
-				const alignment = await draft.evaluate((node) => {
-					const box = node.getBoundingClientRect(),
-						style = getComputedStyle(node);
-					const control = document
-						.querySelector(".attachment-picker")!
-						.getBoundingClientRect();
-					return {
-						textCenter:
-							box.y +
-							parseFloat(style.paddingTop) +
-							parseFloat(style.lineHeight) / 2,
-						controlCenter: control.y + control.height / 2,
-					};
+					}
+					close() {}
+				}
+				Object.defineProperty(window, "EventSource", { value: Source });
+				const viewport = Object.assign(new EventTarget(), {
+					height: 844,
+					offsetTop: 0,
+					scale: 1,
 				});
-				expect(
-					Math.abs(alignment.textCenter - alignment.controlCenter),
-				).toBeLessThanOrEqual(1);
+				Object.defineProperty(window, "visualViewport", { value: viewport });
+				Object.defineProperty(window, "setViewportMetrics", {
+					value: (
+						height: number,
+						offsetTop: number,
+						event: string,
+						scale = 1,
+					) => {
+						Object.assign(viewport, { height, offsetTop, scale });
+						if (event === "resize" || event === "scroll")
+							viewport.dispatchEvent(new Event(event));
+						else if (event === "visibilitychange")
+							document.dispatchEvent(new Event(event));
+						else
+							window.dispatchEvent(
+								new Event(event === "window-resize" ? "resize" : event),
+							);
+					},
+				});
+			}, owner);
+			await page.goto("/");
+			await chooseSession(page, owner.instance);
+			const draft = page.getByLabel("Text for selected Pi (local draft)");
+			await page
+				.getByLabel("Images for selected Pi (local picker)")
+				.setInputFiles({
+					name: "local.png",
+					mimeType: "image/png",
+					buffer: png,
+				});
+			await draft.fill("Hello Pi");
+			async function metrics(
+				height: number,
+				top: number,
+				event: string,
+				scale = 1,
+			) {
+				await page.evaluate(
+					({ height, top, event, scale }) =>
+						(
+							window as unknown as {
+								setViewportMetrics: (
+									h: number,
+									t: number,
+									e: string,
+									s: number,
+								) => void;
+							}
+						).setViewportMetrics(height, top, event, scale),
+					{ height, top, event, scale },
+				);
 			}
-		}
-		// Crop to the declared usable visual viewport, not keyboard-occluded layout space.
-		await page.screenshot({
-			path: testInfo.outputPath(`keyboard-overlay-${width}.png`),
-			clip: { x: 0, y: 64, width, height: 300 },
-		});
-		// The source only listened to visualViewport; these valid metrics must also
-		// be reconciled when window/lifecycle events are the only notification.
-		for (const event of ["window-resize", "pageshow", "visibilitychange"]) {
-			await metrics(500, 20, "resize");
-			await checkBounds(500, 20);
-			await draft.blur();
-			await metrics(844, 0, event);
+			async function checkBounds(height: number, top: number) {
+				await expect
+					.poll(async () => (await page.locator("main").boundingBox())!.height)
+					.toBe(height);
+				const header = (await page.locator("header").boundingBox())!;
+				const composer = (await page.locator(".composer").boundingBox())!;
+				expect(header.y).toBeGreaterThanOrEqual(top);
+				expect(header.y + header.height).toBeLessThanOrEqual(top + height);
+				const gap = top + height - composer.y - composer.height;
+				expect(gap).toBeGreaterThanOrEqual(0);
+				expect(gap).toBeLessThanOrEqual(24);
+				console.log(
+					"VISIBLE_VIEWPORT_GEOMETRY",
+					JSON.stringify({ width, height, top, header, composer, gap }),
+				);
+			}
+			for (const textSize of ["100%", "125%"]) {
+				await page.evaluate((size) => {
+					document.documentElement.style.fontSize = size;
+				}, textSize);
+				for (const [height, top] of [
+					[400, 42],
+					[300, 64],
+				]) {
+					await metrics(height, top, "resize");
+					await checkBounds(height, top);
+					const alignment = await draft.evaluate((node) => {
+						const box = node.getBoundingClientRect(),
+							style = getComputedStyle(node);
+						return {
+							textCenter:
+								box.y +
+								parseFloat(style.paddingTop) +
+								parseFloat(style.lineHeight) / 2,
+							editorCenter: box.y + box.height / 2,
+						};
+					});
+					expect(
+						Math.abs(alignment.textCenter - alignment.editorCenter),
+					).toBeLessThanOrEqual(1);
+				}
+			}
+			// Crop to the declared usable visual viewport, not keyboard-occluded layout space.
+			await page.screenshot({
+				path: testInfo.outputPath(`keyboard-overlay-${width}.png`),
+				clip: { x: 0, y: 64, width, height: 300 },
+			});
+			// The source only listened to visualViewport; these valid metrics must also
+			// be reconciled when window/lifecycle events are the only notification.
+			for (const event of ["window-resize", "pageshow", "visibilitychange"]) {
+				await metrics(500, 20, "resize");
+				await checkBounds(500, 20);
+				await draft.blur();
+				await metrics(844, 0, event);
+				await checkBounds(844, 0);
+			}
+			await page.screenshot({
+				path: testInfo.outputPath(`restored-fullheight-${width}.png`),
+			});
+			await metrics(300, 42, "resize", 2);
 			await checkBounds(844, 0);
-		}
-		await page.screenshot({
-			path: testInfo.outputPath(`restored-fullheight-${width}.png`),
+			await metrics(400, 42, "scroll");
+			await checkBounds(400, 42);
+			await metrics(844, 0, "resize");
+			await draft.fill("First line\nSecond line");
+			expect((await draft.boundingBox())!.height).toBeGreaterThan(44);
+			await draft.fill("Wrapped native draft ".repeat(30));
+			expect((await draft.boundingBox())!.height).toBe(136);
+			await draft.evaluate((node) => {
+				node.scrollTop = node.scrollHeight;
+			});
+			expect(await draft.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+			await draft.fill("Short again");
+			expect((await draft.boundingBox())!.height).toBe(44);
+			await page.evaluate(() => {
+				document.documentElement.style.fontSize = "";
+			});
+			await metrics(844, 0, "window-resize");
+			const textAdjustment = await page.evaluate(() => {
+				const property = ["text-size-adjust", "-webkit-text-size-adjust"].find(
+					(name) => CSS.supports(name, "100%"),
+				);
+				return property
+					? getComputedStyle(document.documentElement).getPropertyValue(
+							property,
+						)
+					: null;
+			});
+			if (textAdjustment !== null) expect(textAdjustment).toBe("100%");
+			else
+				testInfo.annotations.push({
+					type: "coverage",
+					description:
+						"Desktop WebKit lacks iOS text inflation; viewport rotation geometry is checked below.",
+				});
+			await expect(page.locator('meta[name="viewport"]')).not.toHaveAttribute(
+				"content",
+				/user-scalable\s*=\s*no|maximum-scale/,
+			);
+			const paragraph = page
+				.locator('[data-native-item="rotation-text"] p')
+				.first();
+			const beforeRotation = await paragraph.boundingBox();
+			for (let rotation = 0; rotation < 3; rotation++) {
+				await page.setViewportSize({ width: 844, height: width });
+				await metrics(width, 0, "window-resize");
+				await checkBounds(width, 0);
+				await page.setViewportSize({ width, height: 844 });
+				await metrics(844, 0, "window-resize");
+				await checkBounds(844, 0);
+				await expect(paragraph).toHaveCSS("font-size", "16px");
+				await expect
+					.poll(async () => (await paragraph.boundingBox())!.height)
+					.toBe(beforeRotation!.height);
+				await expect(page.locator(".send-button")).toHaveCSS("width", "44px");
+				await expect(page.locator(".send-button")).toHaveCSS("height", "44px");
+			}
+			await page.screenshot({
+				path: testInfo.outputPath(`after-rotation-${width}.png`),
+			});
 		});
-		await metrics(300, 42, "resize", 2);
-		await checkBounds(844, 0);
-		await metrics(400, 42, "scroll");
-		await checkBounds(400, 42);
-		await metrics(844, 0, "resize");
-		await draft.fill("First line\nSecond line");
-		expect((await draft.boundingBox())!.height).toBeGreaterThan(44);
-		await draft.fill("Wrapped native draft ".repeat(30));
-		expect((await draft.boundingBox())!.height).toBe(136);
-		await draft.evaluate((node) => {
-			node.scrollTop = node.scrollHeight;
-		});
-		expect(await draft.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
-		await draft.fill("Short again");
-		expect((await draft.boundingBox())!.height).toBe(44);
-	});
+});
 
 for (const width of [320, 390]) {
 	test(`native tool summaries, diffs, progress and answer copy at ${width}px`, async ({
@@ -6960,19 +7168,20 @@ for (const width of [320, 390]) {
 				.locator(".tool-detail-summary")
 				.evaluate((node) => getComputedStyle(node).outlineStyle),
 		).not.toBe("none");
+		await page.getByRole("button", { name: /^Open sessions:/ }).click();
 		const metadata = page.getByRole("group", {
 			name: "Model and context",
 		});
 		await expect(metadata).toHaveText("model40%/128,000");
-		await expect(page.locator(".conversation .session-metadata")).toHaveCount(
-			0,
-		);
+		await expect(page.locator(".composer .session-metadata")).toHaveCount(0);
+		await page.getByRole("button", { name: "Close sessions" }).click();
 		const active = page.locator('[data-native-item="active"]');
 		await expect(active.locator(".tool-state")).toHaveText("Running");
 		await page.evaluate(() =>
 			(window as unknown as { finishTool: () => void }).finishTool(),
 		);
 		await expect(active.locator(".tool-state")).toHaveText("Done");
+		await page.getByRole("button", { name: /^Open sessions:/ }).click();
 		await expect(metadata.locator(".context-usage")).toHaveText("?%/128,000");
 		await expect(metadata.locator(".context-usage")).toHaveAttribute(
 			"aria-label",
@@ -6981,6 +7190,7 @@ for (const width of [320, 390]) {
 		await expect(metadata.locator(".model-name")).toHaveText(
 			"long-model-name-".repeat(12),
 		);
+		await page.getByRole("button", { name: "Close sessions" }).click();
 		await active.locator("summary").click();
 		await expect(active.locator(".tool-output")).toHaveText(
 			'const ready = "<script>";\n',
@@ -7043,34 +7253,35 @@ for (const width of [320, 390]) {
 			await page
 				.getByPlaceholder("Message Pi")
 				.fill("A locally edited draft ".repeat(12));
-			await expect
-				.poll(async () => {
-					const footer = (await metadata.boundingBox())!;
-					const input = (await page.locator(".composer").boundingBox())!;
-					return (
-						footer.y >= input.y + input.height &&
-						footer.y + footer.height <= height
-					);
-				})
-				.toBe(true);
-			const footer = (await metadata.boundingBox())!;
-			expect(footer.height).toBeLessThanOrEqual(24);
+			const input = (await page.getByPlaceholder("Message Pi").boundingBox())!;
+			expect(input.height).toBeGreaterThanOrEqual(44);
+			await page.getByRole("button", { name: /^Open sessions:/ }).click();
+			await metadata.scrollIntoViewIfNeeded();
+			const label = (await metadata.boundingBox())!;
+			const selectedName = (await page
+				.locator(".selected-session-name")
+				.boundingBox())!;
+			expect(label.y).toBeGreaterThanOrEqual(
+				selectedName.y + selectedName.height,
+			);
+			expect(label.x).toBeGreaterThanOrEqual(0);
+			expect(label.x + label.width).toBeLessThanOrEqual(width);
 			expect(
-				await metadata
-					.locator(".model-name")
-					.evaluate((node) => getComputedStyle(node).textOverflow),
-			).toBe("ellipsis");
+				await metadata.locator(".model-name").evaluate((node) => {
+					return (
+						node.scrollWidth <= node.clientWidth &&
+						getComputedStyle(node).overflowWrap === "anywhere"
+					);
+				}),
+			).toBe(true);
 			const contextBox = (await metadata
 				.locator(".context-usage")
 				.boundingBox())!;
 			expect(contextBox.x + contextBox.width).toBeLessThanOrEqual(width);
-			const input = (await page.getByPlaceholder("Message Pi").boundingBox())!;
-			expect(input.height).toBeGreaterThanOrEqual(44);
 			await page.screenshot({
-				path: testInfo.outputPath(
-					`metadata-below-input-${width}-${height}.png`,
-				),
+				path: testInfo.outputPath(`metadata-in-drawer-${width}-${height}.png`),
 			});
+			await page.getByRole("button", { name: "Close sessions" }).click();
 		}
 		expect(posts).toEqual([]);
 	});

@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { Identity, View } from "../../src/shared/protocol.js";
+import type { Identity, View, TextRequest } from "../../src/shared/protocol.js";
 import type { useBrowserSession } from "./use-browser-session.js";
 
 type ComposerProps = Pick<
@@ -43,16 +43,35 @@ export function ActionReceipt({
 	identity,
 	requestId,
 	message,
+	text,
+	deliverAs,
 }: {
 	identity: Identity;
 	requestId: string;
 	message: string;
+	text?: string;
+	deliverAs?: TextRequest["deliverAs"];
 }) {
 	return (
 		<div className="action-receipt">
 			<p role="status">{message}</p>
+			{text !== undefined && (
+				<p className="receipt-preview">
+					{text.length > 240 ? `${text.slice(0, 240)}…` : text}
+				</p>
+			)}
 			<details>
 				<summary>Details</summary>
+				{deliverAs && (
+					<>
+						<p>Mode: {deliverAs === "steer" ? "Steer" : "Follow-up"}</p>
+						<p>
+							Request receipt, not Pi’s live queue. Queue position and
+							consumption are unknown.
+						</p>
+						<p className="receipt-text">{text}</p>
+					</>
+				)}
 				<p>
 					Instance {identity.instance}
 					<br />
@@ -110,7 +129,8 @@ export function Composer({
 		| undefined
 	>(undefined);
 
-	const sendOptions = useRef<HTMLDetailsElement>(null);
+	const sendOptions = useRef<HTMLDialogElement>(null);
+	const sendButton = useRef<HTMLButtonElement>(null);
 	const followUpButton = useRef<HTMLButtonElement>(null);
 	const sendHold = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const sendPointer = useRef<{ id: number; x: number; y: number } | undefined>(
@@ -129,8 +149,18 @@ export function Composer({
 		clearTimeout(sendHold.current);
 		sendHold.current = undefined;
 	}
+	function openSendOptions() {
+		if (!busyOptions || !sendOptions.current) return;
+		if (!sendOptions.current.open) sendOptions.current.show();
+		followUpButton.current?.focus({ preventScroll: true });
+	}
 	function closeSendOptions(restoreEditorFocus: boolean) {
-		if (sendOptions.current) sendOptions.current.open = false;
+		const dialog = sendOptions.current;
+		// A nonmodal dialog otherwise restores its prior editor focus on close.
+		// Move focus outside first so a pointer choice cannot reopen the keyboard.
+		if (dialog?.open && dialog.contains(document.activeElement))
+			sendButton.current?.focus({ preventScroll: true });
+		dialog?.close();
 		// Pointer submission must not reopen a dismissed software keyboard.
 		if (restoreEditorFocus) draftInput.current?.focus({ preventScroll: true });
 	}
@@ -139,7 +169,7 @@ export function Composer({
 			clearSendHold();
 			sendPointer.current = undefined;
 			suppressSendClick.current = true;
-			if (sendOptions.current) sendOptions.current.open = false;
+			closeSendOptions(false);
 		};
 	}, [selectedKey, busyOptions, paired]);
 	const [closedSlash, setClosedSlash] = useState("");
@@ -222,6 +252,10 @@ export function Composer({
 			{paired && selected && (
 				<section className="composer" aria-label="Browser text input">
 					<div className="composer-notices">
+						<p id="send-choice-guidance" className="visually-hidden">
+							Tap to steer. Hold for Follow-up, or press Arrow Down on Send to
+							open the choice. Alt+Enter in the editor requests Follow-up.
+						</p>
 						{!!observedQuestions && (
 							<div className="needs-answer">
 								<span>
@@ -246,6 +280,7 @@ export function Composer({
 								otherBrowserHoldsInput ||
 								((!!draft.trim() || !!attachment) &&
 									!sendEnabled &&
+									!(canBusyText && !inputIdle && !!attachment) &&
 									!operating &&
 									!outstanding)
 									? "composer-availability"
@@ -364,7 +399,7 @@ export function Composer({
 							</button>
 						)}
 					</div>
-					<div className="composer-bar">
+					<div className="composer-bar" data-draft={draft.length > 0}>
 						<div className="attachment-picker">
 							<label htmlFor="attachment">
 								<span aria-hidden="true">+</span>
@@ -539,22 +574,19 @@ export function Composer({
 							}}
 						/>
 						{busyOptions && (
-							<details
+							<dialog
 								ref={sendOptions}
+								id="send-options"
+								aria-label="Send options"
 								className="send-options"
 								onKeyDown={(event) => {
 									if (event.key === "Escape") {
 										event.preventDefault();
-										if (sendOptions.current) sendOptions.current.open = false;
-										sendOptions.current
-											?.querySelector("summary")
-											?.focus({ preventScroll: true });
+										closeSendOptions(false);
+										sendButton.current?.focus({ preventScroll: true });
 									}
 								}}
 							>
-								<summary aria-label="Send options">
-									<span aria-hidden="true">⋯</span>
-								</summary>
 								<div
 									className="busy-text-controls"
 									aria-label="Busy text requests"
@@ -569,7 +601,7 @@ export function Composer({
 										Follow-up
 									</button>
 								</div>
-							</details>
+							</dialog>
 						)}
 						<button
 							className="stop-button"
@@ -589,8 +621,27 @@ export function Composer({
 							</svg>
 						</button>
 						<button
+							ref={sendButton}
 							className="send-button"
-							aria-label="Send"
+							aria-label={inputIdle ? "Send" : "Steer"}
+							aria-haspopup={busyOptions ? "dialog" : undefined}
+							aria-controls={busyOptions ? "send-options" : undefined}
+							aria-describedby={
+								busyOptions ? "send-choice-guidance" : undefined
+							}
+							onKeyDown={(event) => {
+								if (busyOptions && event.key === "ArrowDown") {
+									event.preventDefault();
+									openSendOptions();
+								}
+							}}
+							onContextMenu={(event) => {
+								if (busyOptions) {
+									event.preventDefault();
+									openSendOptions();
+								}
+							}}
+							title={inputIdle ? "Send" : "Steer the current run"}
 							disabled={!sendEnabled}
 							onPointerDown={(event) => {
 								if (!event.isPrimary) {
@@ -613,8 +664,7 @@ export function Composer({
 								sendHold.current = setTimeout(() => {
 									sendHold.current = undefined;
 									suppressSendClick.current = true;
-									if (sendOptions.current) sendOptions.current.open = true;
-									followUpButton.current?.focus({ preventScroll: true });
+									openSendOptions();
 								}, 500);
 							}}
 							onPointerMove={(event) => {

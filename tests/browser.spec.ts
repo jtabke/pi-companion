@@ -50,6 +50,39 @@ async function expectTakeoverAvailable(page: Page) {
 	await expect(sidebar).toBeHidden();
 }
 
+async function expectBusyReceipt(page: Page, message: string, text: string) {
+	const receipt = page.getByRole("region", { name: "Latest browser request" });
+	await expect(receipt).toHaveCount(1);
+	await expect(receipt.getByRole("status")).toHaveText(message);
+	await expect(receipt.locator(".receipt-preview")).toHaveText(
+		text.length > 240 ? `${text.slice(0, 240)}…` : text,
+	);
+	expect(await receipt.evaluate((node) => !!node.closest(".chat-scroll"))).toBe(
+		true,
+	);
+	await receipt.scrollIntoViewIfNeeded();
+	const preview = await receipt
+		.locator(".receipt-preview")
+		.evaluate((node) => ({
+			height: node.getBoundingClientRect().height,
+			line: parseFloat(getComputedStyle(node).lineHeight),
+		}));
+	expect(preview.height).toBeLessThanOrEqual(3 * preview.line + 0.5);
+	await receipt.getByText("Details", { exact: true }).click();
+	await expect(receipt.locator(".receipt-text")).toHaveText(text);
+	await expect(
+		receipt.getByText(
+			message.startsWith("Steering") ? "Mode: Steer" : "Mode: Follow-up",
+			{ exact: true },
+		),
+	).toBeVisible();
+	await expect(
+		receipt.getByText(/Queue position and consumption are unknown/),
+	).toBeVisible();
+	await receipt.getByText("Details", { exact: true }).click();
+	await expect(page.locator(".composer .receipt-preview")).toHaveCount(0);
+}
+
 // Routine diagnostics are inspected deliberately, not asserted via hidden text.
 async function expectInputDetails(page: Page, message: string | RegExp) {
 	await page.getByRole("button", { name: /^Open sessions:/ }).click();
@@ -148,7 +181,7 @@ test("C4 Stop ignored abort stays Stopping; immutable explicit retry survives sw
 	).toBeDisabled();
 	await expect(
 		page.getByRole("button", {
-			name: "Send",
+			name: /^(Send|Steer)$/,
 			exact: true,
 			includeHidden: true,
 		}),
@@ -217,7 +250,7 @@ test("C4 Stop ignored abort stays Stopping; immutable explicit retry survives sw
 	).toBeVisible();
 	await expect(
 		page.getByRole("button", {
-			name: "Send",
+			name: /^(Send|Steer)$/,
 			exact: true,
 			includeHidden: true,
 		}),
@@ -368,7 +401,11 @@ test("C4 Stop preserves an uncertain original image input independently of Stop 
 		{ times: 1 },
 	);
 	await page
-		.getByRole("button", { name: "Send", exact: true, includeHidden: true })
+		.getByRole("button", {
+			name: /^(Send|Steer)$/,
+			exact: true,
+			includeHidden: true,
+		})
 		.click();
 	await expect(
 		page.getByText(/Uncertain — response lost; no automatic retry/),
@@ -586,7 +623,7 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 	await expect(draft).toHaveValue("draft A");
 	await expect(
 		page.getByRole("button", {
-			name: "Send",
+			name: /^(Send|Steer)$/,
 			exact: true,
 			includeHidden: true,
 		}),
@@ -598,7 +635,11 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 			r.request().postDataJSON().action === "claim",
 	);
 	await page
-		.getByRole("button", { name: "Send", exact: true, includeHidden: true })
+		.getByRole("button", {
+			name: /^(Send|Steer)$/,
+			exact: true,
+			includeHidden: true,
+		})
 		.click();
 	const firstLease = await (await claimResponse).json();
 	await expect(draft).toHaveValue("");
@@ -606,7 +647,7 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 	const capability = firstLease.lease;
 	await expect(
 		page.getByRole("button", {
-			name: "Send",
+			name: /^(Send|Steer)$/,
 			exact: true,
 			includeHidden: true,
 		}),
@@ -616,7 +657,11 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 	await expectSessions(tab, 2);
 	await chooseSession(tab, a);
 	await expect(
-		tab.getByRole("button", { name: "Send", exact: true, includeHidden: true }),
+		tab.getByRole("button", {
+			name: /^(Send|Steer)$/,
+			exact: true,
+			includeHidden: true,
+		}),
 	).toBeDisabled();
 	await expect(
 		tab.getByLabel("Text for selected Pi (local draft)"),
@@ -662,7 +707,11 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 		{ times: 1 },
 	);
 	await page
-		.getByRole("button", { name: "Send", exact: true, includeHidden: true })
+		.getByRole("button", {
+			name: /^(Send|Steer)$/,
+			exact: true,
+			includeHidden: true,
+		})
 		.click();
 	await expect(
 		page.getByText("Uncertain — response lost; no automatic retry", {
@@ -716,7 +765,7 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 	).toHaveCount(0);
 	await expect(
 		page.getByRole("button", {
-			name: "Send",
+			name: /^(Send|Steer)$/,
 			exact: true,
 			includeHidden: true,
 		}),
@@ -737,7 +786,9 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 		},
 		{ times: 1 },
 	);
-	await page.getByRole("button", { name: "Send", exact: true }).click();
+	await page
+		.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
+		.click();
 	await ready;
 	await expect(
 		page.getByLabel("Text for selected Pi (local draft)"),
@@ -745,7 +796,7 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 	await chooseSession(page, b);
 	release();
 	await expect(
-		page.getByRole("button", { name: "Send", exact: true }),
+		page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 	).toBeEnabled();
 	await expect(
 		page.getByText("Forwarded; completion unconfirmed", { exact: true }),
@@ -798,7 +849,11 @@ test("C4 delayed pre-takeover claim/renew responses never restore old holder aut
 	for (const action of ["claim", "renew"]) {
 		if (action === "renew") {
 			await page
-				.getByRole("button", { name: "Send", exact: true, includeHidden: true })
+				.getByRole("button", {
+					name: /^(Send|Steer)$/,
+					exact: true,
+					includeHidden: true,
+				})
 				.click();
 			await expect(
 				page.getByRole("button", {
@@ -826,7 +881,11 @@ test("C4 delayed pre-takeover claim/renew responses never restore old holder aut
 		);
 		if (action === "claim")
 			await page
-				.getByRole("button", { name: "Send", exact: true, includeHidden: true })
+				.getByRole("button", {
+					name: /^(Send|Steer)$/,
+					exact: true,
+					includeHidden: true,
+				})
 				.click();
 		else await sidebarClick(page, "Renew control (60s)");
 		await reachedServer;
@@ -844,7 +903,7 @@ test("C4 delayed pre-takeover claim/renew responses never restore old holder aut
 		).toHaveCount(0);
 		await expect(
 			page.getByRole("button", {
-				name: "Send",
+				name: /^(Send|Steer)$/,
 				exact: true,
 				includeHidden: true,
 			}),
@@ -1032,7 +1091,9 @@ for (const width of [320, 390])
 			},
 			{ times: 1 },
 		);
-		await page.getByRole("button", { name: "Send", exact: true }).click();
+		await page
+			.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
+			.click();
 		await expect(
 			page.getByText(/Uncertain — response lost; no automatic retry/),
 		).toBeVisible();
@@ -1247,7 +1308,10 @@ test("U8 focused Enter dismisses only forwarded unchanged current input, includi
 	);
 	await chooseSession(page, owner.instance);
 	const draft = page.getByLabel("Text for selected Pi (local draft)");
-	const send = page.getByRole("button", { name: "Send", exact: true });
+	const send = page.getByRole("button", {
+		name: /^(Send|Steer)$/,
+		exact: true,
+	});
 	const requests: Record<string, string>[] = [];
 	page.on("request", (req) => {
 		if (req.url().endsWith("/api/text")) requests.push(req.postDataJSON());
@@ -1978,7 +2042,11 @@ for (const width of [320, 390])
 			.getByLabel("Text for selected Pi (local draft)")
 			.fill("Compact deliberate acquisition");
 		await page
-			.getByRole("button", { name: "Send", exact: true, includeHidden: true })
+			.getByRole("button", {
+				name: /^(Send|Steer)$/,
+				exact: true,
+				includeHidden: true,
+			})
 			.click();
 		await expectInputDetails(page, /Forwarded; completion unconfirmed/);
 		await expect(
@@ -2011,7 +2079,7 @@ for (const width of [320, 390])
 		).toBeVisible();
 		await expect(
 			page.getByRole("button", {
-				name: "Send",
+				name: /^(Send|Steer)$/,
 				exact: true,
 				includeHidden: true,
 			}),
@@ -2104,7 +2172,7 @@ for (const width of [320, 390])
 		).toBeVisible();
 		await expect(
 			page.getByRole("button", {
-				name: "Send",
+				name: /^(Send|Steer)$/,
 				exact: true,
 				includeHidden: true,
 			}),
@@ -2248,7 +2316,9 @@ test.describe("I3 slash composer", () => {
 			await draft.press("Escape");
 			if (text === "normal authored") await draft.press("Enter");
 			else
-				await page.getByRole("button", { name: "Send", exact: true }).click();
+				await page
+					.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
+					.click();
 			await expectInputDetails(page, "Forwarded; completion unconfirmed");
 			await expect(draft).toHaveValue("");
 			expect(
@@ -2307,7 +2377,7 @@ test.describe("I3 slash composer", () => {
 		]) {
 			await draft.fill(text);
 			await expect(
-				page.getByRole("button", { name: "Send", exact: true }),
+				page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 			).toBeDisabled();
 		}
 		await draft.fill("/review args");
@@ -2320,7 +2390,7 @@ test.describe("I3 slash composer", () => {
 				.getByText(/Slash commands with images are unsupported/),
 		).toBeVisible();
 		await expect(
-			page.getByRole("button", { name: "Send", exact: true }),
+			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeDisabled();
 		await expect(
 			page.getByRole("img", { name: "Local attachment preview" }),
@@ -2331,7 +2401,7 @@ test.describe("I3 slash composer", () => {
 			page.locator("header").getByText("Pi is working", { exact: true }),
 		).toBeVisible();
 		await expect(
-			page.getByRole("button", { name: "Send", exact: true }),
+			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeDisabled();
 		await expect(
 			page.getByRole("button", { name: "Follow-up", exact: true }),
@@ -2345,7 +2415,9 @@ test.describe("I3 slash composer", () => {
 		await draft.press("Enter");
 		await draft.press("Alt+Enter");
 		await draft.fill("normal busy authored");
-		await page.getByLabel("Send options", { exact: true }).tap();
+		await page
+			.getByRole("button", { name: "Steer", exact: true })
+			.press("ArrowDown");
 		await expect(
 			page.getByRole("button", { name: "Follow-up", exact: true }),
 		).toBeEnabled();
@@ -2357,11 +2429,11 @@ test.describe("I3 slash composer", () => {
 			page.locator(".composer").getByText(/Slash discovery unavailable/),
 		).toBeVisible();
 		await expect(
-			page.getByRole("button", { name: "Send", exact: true }),
+			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeDisabled();
 		await draft.fill("normal idle authored");
 		await expect(
-			page.getByRole("button", { name: "Send", exact: true }),
+			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeEnabled();
 		expect(controls).toEqual([]);
 		expect(inputs).toEqual([]);
@@ -2369,7 +2441,7 @@ test.describe("I3 slash composer", () => {
 		await draft.fill("/review captured");
 		await draft.press("Escape");
 		await expect(
-			page.getByRole("button", { name: "Send", exact: true }),
+			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeEnabled();
 		let releaseClaim!: () => void, seenClaim!: () => void;
 		const ready = new Promise<void>((resolve) => {
@@ -2392,12 +2464,14 @@ test.describe("I3 slash composer", () => {
 			},
 			{ times: 1 },
 		);
-		await page.getByRole("button", { name: "Send", exact: true }).click();
+		await page
+			.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
+			.click();
 		await ready;
 		await chooseSession(page, other.instance);
 		releaseClaim();
 		await expect(
-			page.getByRole("button", { name: "Send", exact: true }),
+			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeEnabled();
 		expect(inputs).toEqual([]);
 		expect(
@@ -2415,7 +2489,7 @@ test.describe("I3 slash composer", () => {
 		await expect(page.getByRole("listbox")).toHaveCount(0);
 		await expect(
 			page.getByRole("button", {
-				name: "Send",
+				name: /^(Send|Steer)$/,
 				exact: true,
 				includeHidden: true,
 			}),
@@ -2460,6 +2534,7 @@ test("I2 busy text repeated requests, local attachment guard and accessible mobi
 		(s: { session: string }) => s.session === "Browser test",
 	);
 	await chooseSession(page, owner.instance);
+	await expect(page.locator(".busy-delivery-hint")).toHaveCount(0);
 	const before = (
 		await (await context.request.get("/api/fixture/dispatches")).json()
 	).dispatches;
@@ -2486,17 +2561,30 @@ test("I2 busy text repeated requests, local attachment guard and accessible mobi
 			.getByLabel("Images for selected Pi (local picker)")
 			.setInputFiles({ name: "busy.png", mimeType: "image/png", buffer: png });
 		await expect(
-			page.getByRole("button", { name: "Send", exact: true }),
+			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeDisabled();
 		await expect(
 			page.getByRole("button", { name: "Follow-up", exact: true }),
 		).toHaveCount(0);
 		await expect(draft).toHaveAccessibleDescription(/images stay local/);
+		await expect(page.locator("#composer-availability")).toHaveClass(
+			"visually-hidden",
+		);
+		expect(
+			(await page.locator("#composer-availability").boundingBox())!.height,
+		).toBeLessThanOrEqual(1);
 		await draft.press("Enter");
 		await draft.press("Alt+Enter");
 		await page.getByRole("button", { name: /^Remove image/ }).click();
-		const send = page.getByRole("button", { name: "Send", exact: true });
-		const options = page.getByLabel("Send options", { exact: true });
+		const send = page.getByRole("button", {
+			name: /^(Send|Steer)$/,
+			exact: true,
+		});
+		await expect(send.locator("svg")).toBeVisible();
+		await expect(send).toHaveText("");
+		await expect(
+			page.getByLabel("More send options", { exact: true }),
+		).toHaveCount(0);
 		const menu = page.locator(".send-options");
 		const followUp = page.getByRole("button", {
 			name: "Follow-up",
@@ -2591,7 +2679,7 @@ test("I2 busy text repeated requests, local attachment guard and accessible mobi
 				} else {
 					await state("no-pending");
 					await state("settled");
-					await expect(options).toHaveCount(0);
+					await expect(menu).toHaveCount(0);
 				}
 				await page.waitForTimeout(550); // The original hold must be invalidated, not delayed to a new owner.
 				await page.mouse.up();
@@ -2621,22 +2709,21 @@ test("I2 busy text repeated requests, local attachment guard and accessible mobi
 			["next-tap", "steer"],
 			["alt-enter", "followUp"],
 		]) {
-			const text = `${action} ${width}`;
+			const text =
+				action === "default"
+					? "A long browser request.\n".repeat(20).trim()
+					: `${action} ${width}`;
 			await draft.fill(text);
 			const count = mutations.length;
 			if (action === "choice") {
-				const tab = testInfo.project.name === "webkit" ? "Alt+Tab" : "Tab";
 				if (width === 320) {
-					await draft.focus();
-					await page.keyboard.press(tab);
-					await expect(options).toBeFocused();
-					await page.keyboard.press("Enter");
+					await send.focus();
+					await page.keyboard.press("ArrowDown");
 					await expect(menu).toHaveAttribute("open", "");
 					await page.keyboard.press("Escape");
 					await expect(menu).not.toHaveAttribute("open");
-					await expect(options).toBeFocused();
-					await page.keyboard.press("Space");
-					await page.keyboard.press(tab);
+					await expect(send).toBeFocused();
+					await page.keyboard.press("ArrowDown");
 				} else {
 					const box = (await send.boundingBox())!;
 					if (cdp)
@@ -2665,7 +2752,7 @@ test("I2 busy text repeated requests, local attachment guard and accessible mobi
 						await page.evaluate((enlarged) => {
 							document.documentElement.style.fontSize = enlarged ? "125%" : "";
 						}, enlarged);
-						for (const control of [options, followUp, send]) {
+						for (const control of [followUp, send]) {
 							const box = (await control.boundingBox())!;
 							expect(box.height).toBeGreaterThanOrEqual(44);
 							expect(box.width).toBeGreaterThanOrEqual(44);
@@ -2757,13 +2844,18 @@ test("I2 busy text repeated requests, local attachment guard and accessible mobi
 			await expect(draft).not.toBeFocused();
 			await expect(menu).toHaveCount(0);
 			const mutationsBeforeInspection = mutations.length;
-			await expectInputDetails(
+			await expectBusyReceipt(
 				page,
 				mode === "steer"
 					? "Steering requested (completion unconfirmed)"
 					: "Follow-up requested (completion unconfirmed)",
+				text,
 			);
 			expect(mutations).toHaveLength(mutationsBeforeInspection);
+			if (action === "default")
+				await page.screenshot({
+					path: testInfo.outputPath(`request-receipt-${width}.png`),
+				});
 			expect(
 				(await (await context.request.get("/api/fixture/dispatches")).json())
 					.lastText,
@@ -2791,7 +2883,10 @@ test("I2 busy text repeated requests, local attachment guard and accessible mobi
 	await cdp?.detach();
 	// An open hold menu and its consumed Send click must not interfere with Stop.
 	await draft.fill("Stop keeps this draft");
-	const send = page.getByRole("button", { name: "Send", exact: true });
+	const send = page.getByRole("button", {
+		name: /^(Send|Steer)$/,
+		exact: true,
+	});
 	const box = (await send.boundingBox())!;
 	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
 	await page.mouse.down();
@@ -2904,11 +2999,12 @@ test("I2 busy text lost response retains original mode/id/text with explicit ded
 		await retry.evaluate((node) => (node as HTMLButtonElement).click());
 		await expect(retry).toHaveCount(0);
 		await expect(draft).toBeFocused(); // The forwarded original did not clear the newer draft.
-		await expectInputDetails(
+		await expectBusyReceipt(
 			page,
 			mode === "steer"
 				? "Steering requested (completion unconfirmed)"
 				: "Follow-up requested (completion unconfirmed)",
+			`original ${mode}`,
 		);
 		expect(requests).toHaveLength(2);
 		expect(requests[1].requestId).toBe(requests[0].requestId);
@@ -2922,6 +3018,29 @@ test("I2 busy text lost response retains original mode/id/text with explicit ded
 				.dispatches,
 		).toBe(before + 1);
 		await expect(draft).toHaveValue("edited must not replace original");
+		await chooseSession(page, other.instance);
+		await expect(
+			page.getByRole("region", { name: "Latest browser request" }),
+		).toHaveCount(0);
+		await chooseSession(page, owner.instance);
+		await expect(
+			page
+				.getByRole("region", { name: "Latest browser request" })
+				.locator(".receipt-preview"),
+		).toHaveText(`original ${mode}`);
+		// Reload only after both routed loss cases. WebKit's now-controlling
+		// service worker can bypass page.route on subsequent requests.
+		if (mode === "followUp") {
+			await page.reload();
+			await expect(
+				page.getByRole("button", { name: /^Open sessions: Browser test/ }),
+			).toBeVisible();
+			await expect(draft).toHaveValue("");
+			await expect(
+				page.getByRole("region", { name: "Latest browser request" }),
+			).toHaveCount(0);
+			expect(requests).toHaveLength(2);
+		}
 		page.off("request", listener);
 	}
 	await state("reset");
@@ -2978,7 +3097,10 @@ test("I2 busy text delayed acquisition captures mode, allows Pi settling and nev
 			{ times: 1 },
 		);
 		if (change === "follow-up idle") await draft.press("Alt+Enter");
-		else await page.getByRole("button", { name: "Send", exact: true }).click();
+		else
+			await page
+				.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
+				.click();
 		await ready;
 		await draft.fill("new local draft");
 		if (change !== "selection") {
@@ -2989,11 +3111,12 @@ test("I2 busy text delayed acquisition captures mode, allows Pi settling and nev
 		} else await chooseSession(page, other.instance);
 		release();
 		if (change !== "selection") {
-			await expectInputDetails(
+			await expectBusyReceipt(
 				page,
 				change === "idle"
 					? "Steering requested (completion unconfirmed)"
 					: "Follow-up requested (completion unconfirmed)",
+				"captured busy text",
 			);
 			expect(requests).toHaveLength(1);
 			expect(requests[0].deliverAs).toBe(
@@ -3120,7 +3243,7 @@ test("I2 busy text older or unavailable bridges fail closed with owning Pi full-
 			"Busy text unavailable — fully restart the owning Pi to load the updated bridge.",
 		);
 		await expect(
-			page.getByRole("button", { name: "Send", exact: true }),
+			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeDisabled();
 		await expect(
 			page.getByRole("button", { name: "Follow-up", exact: true }),
@@ -3138,7 +3261,9 @@ test("I2 busy text older or unavailable bridges fail closed with owning Pi full-
 	await state("idle");
 	const draft = page.getByLabel("Text for selected Pi (local draft)");
 	await draft.fill("presentation receipt");
-	await page.getByRole("button", { name: "Send", exact: true }).click();
+	await page
+		.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
+		.click();
 	await expectInputDetails(page, "Forwarded; completion unconfirmed");
 	await state("work");
 	await expect(draft).toHaveAccessibleDescription(/Busy text unavailable/);
@@ -3286,7 +3411,11 @@ test("C4 action acquisition captures image/text and questionnaire payloads, seri
 	);
 	// Same-turn clicks use public DOM buttons (and respect disabled state), not hidden authority hooks.
 	await page
-		.getByRole("button", { name: "Send", exact: true, includeHidden: true })
+		.getByRole("button", {
+			name: /^(Send|Steer)$/,
+			exact: true,
+			includeHidden: true,
+		})
 		.evaluate((button) => {
 			(button as HTMLButtonElement).click();
 			(button as HTMLButtonElement).click();
@@ -3309,7 +3438,7 @@ test("C4 action acquisition captures image/text and questionnaire payloads, seri
 	).toBeDisabled();
 	await expect(
 		page.getByRole("button", {
-			name: "Send",
+			name: /^(Send|Steer)$/,
 			exact: true,
 			includeHidden: true,
 		}),
@@ -3598,7 +3727,10 @@ test("C4 action acquisition delayed claim cannot redirect across selection/gener
 			{ times: 1 },
 		);
 		if (change === "question closure") await submitQuestionnaire(page);
-		else await page.getByRole("button", { name: "Send", exact: true }).click();
+		else
+			await page
+				.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
+				.click();
 		await ready;
 		if (change === "selection") await chooseSession(page, other.instance);
 		if (change === "generation") {
@@ -3701,7 +3833,11 @@ test("C4 action acquisition lease expiry and failed original reclaim preserve un
 		{ times: 1 },
 	);
 	await page
-		.getByRole("button", { name: "Send", exact: true, includeHidden: true })
+		.getByRole("button", {
+			name: /^(Send|Steer)$/,
+			exact: true,
+			includeHidden: true,
+		})
 		.click();
 	await expect(
 		page.getByRole("button", { name: "Retry same outstanding input" }),
@@ -3992,7 +4128,7 @@ for (const width of [320, 390])
 		).toBe(0);
 		await expect(
 			page.getByRole("button", {
-				name: "Send",
+				name: /^(Send|Steer)$/,
 				exact: true,
 				includeHidden: true,
 			}),
@@ -4114,7 +4250,7 @@ test("reload restores only the selected owner, reconciles replacement and never 
 		).toHaveAccessibleDescription(/Disconnected — cached content is read-only/);
 		await expect(
 			page.getByRole("button", {
-				name: "Send",
+				name: /^(Send|Steer)$/,
 				exact: true,
 				includeHidden: true,
 			}),
@@ -4290,7 +4426,9 @@ for (const failure of ["503", "lost response"])
 				},
 				{ times: 1 },
 			);
-			await page.getByRole("button", { name: "Send", exact: true }).click();
+			await page
+				.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
+				.click();
 			await expect(
 				page.getByText(/Uncertain — response lost; no automatic retry/),
 			).toBeVisible();
@@ -4627,7 +4765,7 @@ for (const failure of ["network", "503"])
 			await draft.fill("keep read-only after failed native probe");
 			await expect(draft).toHaveAccessibleDescription(/Disconnected/);
 			await expect(
-				page.getByRole("button", { name: "Send", exact: true }),
+				page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 			).toBeDisabled();
 			await page.waitForTimeout(250);
 			expect(posts).toEqual([]);
@@ -4658,7 +4796,7 @@ test("P3 Forget shares synchronous admission and disables all competing native a
 			.getByLabel("Text for selected Pi (local draft)")
 			.fill("not sent");
 		await expect(
-			page.getByRole("button", { name: "Send", exact: true }),
+			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeEnabled();
 		let entered!: () => void, release!: () => void;
 		const ready = new Promise<void>((resolve) => (entered = resolve)),
@@ -4686,10 +4824,10 @@ test("P3 Forget shares synchronous admission and disables all competing native a
 		await expect(page.getByLabel("Pairing code")).toHaveCount(0);
 		await page.getByRole("button", { name: "Close sessions" }).click();
 		await expect(
-			page.getByRole("button", { name: "Send", exact: true }),
+			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeDisabled();
 		await page
-			.getByRole("button", { name: "Send", exact: true })
+			.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
 			.evaluate((button: HTMLButtonElement) => button.click());
 		expect(posts).toEqual(["/api/forget"]);
 		release();
@@ -4834,9 +4972,20 @@ test("Native rename selected drawer Save/Cancel/Escape preserves draft, keyboard
 			mutations.push(req.url());
 	});
 	await page.getByRole("button", { name: /^Open sessions:/ }).click();
-	await dialog
-		.getByRole("button", { name: "Rename session", exact: true })
-		.click();
+	await expect(dialog.locator(".selected-session-name")).toHaveText(
+		"Selected: Browser test",
+	);
+	const rename = dialog.getByRole("button", {
+		name: "Rename session",
+		exact: true,
+	});
+	const renameBox = (await rename.boundingBox())!;
+	expect(renameBox.y + renameBox.height).toBeLessThanOrEqual(
+		(await dialog
+			.getByRole("navigation", { name: "Terminal sessions" })
+			.boundingBox())!.y,
+	);
+	await rename.click();
 	const name = dialog.getByLabel("Session name", { exact: true });
 	await expect(name).toHaveValue("Browser test");
 	await expect(name).toBeFocused();
