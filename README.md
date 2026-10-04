@@ -11,16 +11,25 @@ replacement for Pi's terminal, tools, extensions or conversation storage.
 
 - **One dashboard for your Pi terminals:** sessions are grouped by exact working
   directory, with the most recent directory first and newest sessions first within it.
-  Same-named folders in different locations stay separate. Status dots and labels show
-  observed activity and questions needing answers.
+  Directory headings sit above full-width session rows.
+  Same-named folders in different locations stay separate and show their parent paths.
+  **Full path** opens a dismissible path popover beside each directory heading.
+  Status dots and labels show observed activity and questions needing answers. The drawer shows the selected session's
+  model and rename pencil in its session row. The top shows only the live-terminal count.
+  A separate compact footer keeps Leave session, browser control and Device access visible.
   Swipe from the left edge on narrow screens to open the animated sessions drawer,
   then swipe left inside it to close. Reduced-motion settings disable the animation.
 - **Image inspection:** tap native tool-returned images to enlarge/zoom them, without an
   extra frame or visible caption. Image buttons retain accessible labels and keyboard focus.
-- **Text and image feedback:** pick or paste up to four PNG/JPEG/WebP images into the composer.
+- **Readable tool output:** inspect compact tool stacks, filename and command summaries,
+  execution states, highlighted code and added/deleted edit lines. Expand only the output you need.
+- **Text and image feedback:** narrow-screen drafts use a full-width editor above the actions.
+  Pick or paste up to four PNG/JPEG/WebP images into the composer.
   Preview/remove them locally before sending together. Send acquires free browser control for idle
   text or an image; pasting alone never sends or takes control.
-- **Busy text:** request Steer during a run or Follow-up afterward, without stopping Pi.
+- **Busy text:** choose Steer or Follow-up beside **+**, then tap the send arrow,
+  without stopping Pi. Review the latest request's text and mode
+  in an expandable receipt; it is not Pi's live queue.
 - **Slash suggestions:** discover the selected terminal's prompt templates and skills;
   choose a suggestion, then Send. Unverified extension commands remain terminal-only.
 - **Direct actions:** Send, questionnaire responses, Rename and Stop acquire free control
@@ -32,22 +41,71 @@ replacement for Pi's terminal, tools, extensions or conversation storage.
 - **Private phone access:** use Tailscale HTTPS; reconnect after locking the phone or
   closing the browser without transferring ownership away from the Pi terminal.
 
+## Screenshots
+
+Actual browser UI at a 390px-wide mobile viewport, using sample sessions and conversation
+content. These are browser captures, not photos of a physical phone. Click an image for full size.
+
+<table>
+  <tr>
+    <td valign="top">
+      <a href="docs/screenshots/mobile-composer.png"><img src="docs/screenshots/mobile-composer.png" width="300" alt="Mobile conversation with compact Read, Edit and Shell tools, a highlighted edit diff, and a full-width draft above image, Stop and send controls."></a>
+      <p><strong>Read and reply.</strong> Expand native tool output and inspect highlighted edits. A nonempty mobile draft gets the full input width; Stop stays separate.</p>
+    </td>
+    <td valign="top">
+      <a href="docs/screenshots/follow-up.png"><img src="docs/screenshots/follow-up.png" width="300" alt="The same mobile draft with Follow-up selected beside the image picker and a single send arrow."></a>
+      <p><strong>Choose busy delivery.</strong> Select Steer or Follow-up beside +, then use the arrow to send. Changing the mode sends nothing. Enter uses the selected mode; Alt+Enter requests Follow-up directly.</p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <a href="docs/screenshots/request-receipt.png"><img src="docs/screenshots/request-receipt.png" width="300" alt="Latest browser request receipt showing Follow-up requested, completion unconfirmed, the request text, and a Details disclosure."></a>
+      <p><strong>Review what you requested.</strong> The latest successful Steer/Follow-up request has a text preview and expandable details. Delivery completion and queue position remain unconfirmed; the receipt disappears on reload.</p>
+    </td>
+    <td valign="top">
+      <a href="docs/screenshots/sessions-drawer.png"><img src="docs/screenshots/sessions-drawer.png" width="300" alt="Compact live sessions drawer with a terminal count, the selected model and rename pencil inside its row, full-width grouped sessions, and visible footer and device controls."></a>
+      <p><strong>Switch between live terminals.</strong> Sessions are grouped by working directory. The selected model and rename pencil stay inside its row. Leave, control actions and Device access sit below the list.</p>
+    </td>
+  </tr>
+</table>
+
+### Refresh these screenshots
+
+After the [development setup](#install-and-build-from-the-checkout), run from the repository root:
+
+```sh
+# Once, if the project's Chromium binary is not installed:
+PLAYWRIGHT_BROWSERS_PATH=.cache/playwright npx playwright install chromium
+
+# Rebuild the current UI and regenerate all four images:
+npm run screenshots
+```
+
+[`scripts/screenshots.mjs`](scripts/screenshots.mjs) serves the built UI on a temporary
+loopback port and uses Playwright with isolated sample API responses. It does not connect
+to the running gateway, read private sessions, call a model, or change browser access.
+It closes its browser and server after capture. The command overwrites only the four
+images in `docs/screenshots/`; review the images and captions together before committing.
+Update the sample scenario in the script when the illustrated journey changes.
+
 ## Browser input
 
 The composer starts with +, text and Send on one compact row inside a rounded
-surface. On screens narrower than 640px, a nonempty draft gets a full-width editor
-above the action row; clearing the draft restores the compact row. Text grows upward
+surface. On screens narrower than 640px, a nonempty draft or an available busy-mode
+selector gets a full-width editor above the action row. An empty idle draft restores the compact row. Text grows upward
 as it wraps and scrolls natively after a height cap. The shell follows the
-browser's reported visual viewport at normal zoom and rechecks it on window resize and
-page restoration. Text sizing stays at 100% to prevent Safari's automatic rotation
+browser's reported visual viewport at normal zoom. It rechecks app return, orientation,
+and focus transitions over the next two animation frames because WebKit can update
+measurements after the event. Invalid readings fall back to CSS viewport sizing instead
+of retaining an old keyboard-sized shell. This uses no permanent polling, forced reload,
+or focus/scroll reset. Text sizing stays at 100% to prevent Safari's automatic rotation
 inflation; pinch zoom and explicit text enlargement remain available.
 Uncertain input uses one outcome receipt with Details and explicit Retry;
 a simultaneous browser-control blocker remains separate. Notices scroll within a bounded
 area rather than pushing the editor offscreen.
 Picking multiple images or pasting repeatedly appends local thumbnails in a horizontal
-row above the editor; each image can be removed before sending. Short keyboard layouts share space between notices
-and Follow-up without covering either; complete touch targets and readable notices stay
-available. Jump to latest is a floating circle centered above the composer, not a separate
+row above the editor; each image can be removed before sending. Short keyboard layouts
+retain readable notices and complete touch targets without covering the delivery selector. Jump to latest is a floating circle centered above the composer, not a separate
 row or full-width overlay. The session name, project and activity share one compact
 header; long names are shortened visually, with full identity retained in the accessible
 session button and drawer. Keyboard focus uses a small neutral ring around the drawer
@@ -72,22 +130,25 @@ diffs using the fence language or file extension, rendered as escaped React elem
 Unknown languages and code over 100,000 characters stay plain text; shell logs and
 Edit/Write receipts are not interpreted as source code. Highlighting does not change copied text.
 Copy answer copies the displayed answer's Markdown text, not reasoning or tool output;
-shortened answers remain previews, not the full native history. Code copying stays separate.
-A read-only label below the selected session name in the sessions drawer shows the model
-name without its provider and estimated context usage as `70%/272,000`. Long model names
-wrap so the full name remains readable. Unknown usage shows `?%` rather
-than zero; no child-inclusive cost total is inferred.
+shortened answers remain previews, not the full native history. A small muted Copy icon sits
+just below each answer, aligned with the text, inside a 44px touch target. Code copying
+stays separate.
+The selected session row places its observed model at bottom-right beside the activity
+status, with the rename pencil at top-right. Long model names wrap when needed. Context usage is not displayed.
 Markdown tables keep readable natural column widths in a separate horizontal scroll area,
 with Left/Right-arrow controls when that area is focused. They do not widen the page.
 
-The send button uses an arrow in both idle and busy states. While Pi is busy, its
-accessible label is **Steer**; tapping it or pressing unmodified **Enter** requests
-Steer, matching Pi's terminal default. Hold the arrow for 500ms to open **Follow-up**,
-then choose Follow-up to send. There is no separate More button. Keyboard users can
-press **Arrow Down** on Send to open the same choice, **Escape** to close it, or
-**Alt+Enter** in the editor to request Follow-up directly.
-Opening the choice or releasing a hold sends nothing. **Shift+Enter** inserts a
-newline; Stop stays separate. Pi owns steering boundaries and follow-up timing;
+The send button uses an arrow in both idle and busy states. While busy text is available,
+a **Steer / Follow-up** selector appears beside **+**. Tapping the arrow or pressing
+unmodified **Enter** in the editor requests the selected mode. Its accessible label is
+**Steer** or **Send Follow-up**. Changing the mode sends nothing. The selection remains
+visible after sending, and resets to Steer when Pi becomes idle or you switch sessions.
+Idle Send is unchanged. There is no hold menu or separate Follow-up button.
+Pressing the arrow keeps the editor focused until the click completes, so keyboard closure
+cannot move Send before release. The click requests dispatch and then closes the keyboard;
+a canceled press or scrolling gesture does not send.
+**Alt+Enter** in the editor requests Follow-up directly without changing the selection.
+**Shift+Enter** inserts a newline; Stop stays separate. Pi owns steering boundaries and follow-up timing;
 these requests do not interrupt a running tool.
 Steer uses Pi's next steering boundary; Follow-up waits until after the current run.
 This guidance does not reserve conversation or composer space. The latest successful browser Steer/Follow-up request
@@ -98,8 +159,7 @@ still waiting or was consumed. It is kept only in memory and disappears on page 
 Status says **requested**, not confirmed queued or processed. Multiple deliberate requests
 are allowed. Lost responses retain the original ID/text/mode for explicit retry; refreshing
 or reconnecting never resends input. Busy image attachments remain local and must be
-removed before requesting busy text. Their routine explanation stays in Input details
-and the editor's accessible description, not above the thumbnails. Safety and error
+removed before requesting busy text. Their routine explanation stays in the editor's accessible description, not above the thumbnails. Safety and error
 notices remain visible.
 
 While Pi is idle, type `/` for suggestions from that selected session. Tap a supported
@@ -117,8 +177,8 @@ slash execution, and may safely reject the new multi-image envelope until restar
 ## Rename a session
 
 Open **Live sessions**. The drawer heading and Close remain available while its contents
-scroll. The selected session's name and **Rename session** appear above the terminal list.
-Choose **Rename session**, edit the native name, then select **Save** or **Cancel**. Names must be nonblank and at most 120 UTF-16 units. Save uses
+scroll. The rename pencil appears beside the selected session's row.
+Choose the pencil (**Rename session**), edit the native name, then select **Save** or **Cancel**. Names must be nonblank and at most 120 UTF-16 units. Save uses
 Pi's public session-name API, not model input or a browser name store. Older bridges
 without rename support do not offer the action.
 
@@ -154,7 +214,7 @@ silently resent. Closing the browser or gateway does not stop Pi.
 - `web/src/`: React/Vite presentation, deliberate actions and one selected-session
   EventSource (SSE) subscription. Native dialog provides the session drawer;
   react-markdown/remark-gfm render text and PhotoSwipe provides image inspection.
-- `scripts/`: declaration-link setup and managed restart. `tests/` uses Vitest and
+- `scripts/`: declaration-link setup, managed restart and sample-data README screenshot generation. `tests/` uses Vitest and
   Playwright fixtures. `probes/` contains explicit isolated native-Pi checks.
 
 The package uses strict TypeScript and native ESM with pinned npm dependencies. Keep
@@ -505,6 +565,12 @@ After rebuilding and restarting the known gateway with the existing origin/port:
    code. Optional temporary-access check: pair with Remember unchecked, restart the
    gateway, and confirm that another code is required.
 
+For layout recovery, use the same Safari or home-screen app surface you normally use.
+Leave an unsent draft, repeatedly open/dismiss the keyboard, switch away and return,
+and rotate portrait → landscape → portrait. The header and composer must return onscreen;
+the draft must remain unchanged and no input may be sent. Repeat with the keyboard open
+when switching away or rotating. Do not send the test draft.
+
 These steps are an owner check, not a claim of completed iPhone or soft-keyboard testing.
 
 ## Limitations
@@ -513,8 +579,8 @@ These steps are an owner check, not a claim of completed iPhone or soft-keyboard
   explicitly source-load it and opt in with `companionReplies: true`. The interface is
   off by default; the installed questionnaire is unchanged. Arbitrary custom dialogs
   are not supported.
-- **Busy input is best-effort:** busy Send/Enter requests Steer; hold Send or use
-  Alt+Enter for Follow-up. Forwarding does not confirm Pi consumed or completed the
+- **Busy input is best-effort:** busy Send/Enter uses the selected Steer/Follow-up mode;
+  Alt+Enter requests Follow-up directly. Forwarding does not confirm Pi consumed or completed the
   input. Busy images and slash commands remain terminal-only.
 - **Stop is not a cancellation receipt:** it requests abort and observes parent
   settlement, not cancellation of every queued input or background job. The companion

@@ -20,6 +20,7 @@
 		"build": "tsc -p tsconfig.node.json && vite build",
 		"start": "node dist/gateway/cli.js",
 		"restart": "node scripts/restart.mjs",
+		"screenshots": "npm run build && PLAYWRIGHT_BROWSERS_PATH=.cache/playwright node scripts/screenshots.mjs",
 		"test": "npm run build && vitest run",
 		"test:browser": "npm run build && PLAYWRIGHT_BROWSERS_PATH=.cache/playwright playwright test",
 		"check": "npm run typecheck && npm test && npm run test:browser",
