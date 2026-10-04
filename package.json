@@ -30,7 +30,6 @@
 		"@fastify/cookie": "11.1.2",
 		"@fastify/helmet": "13.1.1",
 		"@fastify/static": "10.1.5",
-		"@sinclair/typebox": "0.34.52",
 		"fastify": "5.12.5",
 		"fs-ext": "2.1.1",
 		"lowlight": "3.3.0",
@@ -55,7 +54,8 @@
 		"vitest": "4.1.11"
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": "0.99.2 || 1.0.1"
+		"@earendil-works/pi-coding-agent": "*",
+		"@sinclair/typebox": "*"
 	},
 	"peerDependenciesMeta": {
 		"@earendil-works/pi-coding-agent": {
