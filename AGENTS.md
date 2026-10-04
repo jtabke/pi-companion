@@ -9,8 +9,8 @@ Prefer fewer concepts and moving parts, not the lowest line count at any cost.
 - Track unfinished work in issues and completed changes in Git commits. Do not recreate plan or checkpoint-history files.
 - Trace the real entry point and owning boundary. Check whether existing behavior or configuration already meets the request. Reproduce a reported bug when practical.
 - Define one observable outcome, a closed file envelope, and the smallest useful validation. Deliver thin end-to-end slices; do not build speculative infrastructure first.
-- Use one active writer per checkout. Keep unrelated user changes intact. Delegate only when isolated context, specialist judgment, or independent review adds value; handle small tasks directly.
-- Stop and ask before an unapproved product, architecture, dependency, persistence, release, or safety decision. Do not stage, commit, publish, or deploy without authorization.
+- Use one active writer per checkout across all sessions and children. Keep unrelated user changes intact. Independent concurrent writers need separate worktrees from a committed base. Delegate only when isolation, specialist judgment, or independent review earns its cost; handle routine bounded work directly.
+- Stop and ask before an unapproved product, architecture, dependency, persistence, release, or safety decision. Do not stage, commit, publish, or deploy without authorization. When an authorized checkpoint passes its required checks, commit its intended changes before starting another independent checkpoint.
 
 ## Small, maintainable code
 
@@ -51,6 +51,7 @@ Prefer one primary test owner per contract. Extend an existing case table when a
 
 ## Validation and review
 
+- For mobile UI changes, define the target journey and observable layout criteria before editing. Review the complete screen for usable content width, permanent chrome, keyboard behavior, and touch operation—not only isolated controls or absence of overlap. Use focused browser evidence and state which claims still require a real phone.
 - During iteration, run the changed test file or smallest relevant selection. Do not turn each edit into a release gate.
 - Standalone `npm test` and `npm run test:browser` build first because fixtures use compiled code. Preserve that contract. Use their file/name filters for focused checks.
 - Select final checks from the changed contracts before running them. For a behavior-preserving change within one backend owner, prefer typechecking and that owner's test file or relevant cases. Run browser cases when browser behavior or a browser-only contract is affected; use file/name and engine filters. Do not make the full browser suite a default gate for every refactor.
