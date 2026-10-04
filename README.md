@@ -24,7 +24,7 @@ replacement for Pi's terminal, tools, extensions or conversation storage.
   extra frame or visible caption. Image buttons retain accessible labels and keyboard focus.
 - **Readable tool output:** inspect compact tool stacks, filename and command summaries,
   execution states, highlighted code and added/deleted edit lines. Expand only the output you need.
-- **Text and image feedback:** narrow-screen drafts use a full-width editor above the actions.
+- **Text and image feedback:** narrow-screen drafts stay on one row until they wrap, then use a full-width editor above the actions.
   Pick or paste up to four PNG/JPEG/WebP images into the composer.
   Preview/remove them locally before sending together. Send acquires free browser control for idle
   text or an image; pasting alone never sends or takes control.
@@ -52,7 +52,7 @@ content. These are browser captures, not photos of a physical phone. Click an im
   <tr>
     <td valign="top">
       <a href="docs/screenshots/mobile-composer.png"><img src="docs/screenshots/mobile-composer.png" width="300" alt="Mobile conversation with compact Read, Edit and Shell tools, a highlighted edit diff, and a full-width draft above image, Stop and send controls."></a>
-      <p><strong>Read and reply.</strong> Expand native tool output and inspect highlighted edits. A nonempty mobile draft gets the full input width; Stop stays separate.</p>
+      <p><strong>Read and reply.</strong> Expand native tool output and inspect highlighted edits. A wrapped mobile draft gets the full input width; Stop stays separate.</p>
     </td>
     <td valign="top">
       <a href="docs/screenshots/follow-up.png"><img src="docs/screenshots/follow-up.png" width="300" alt="The same mobile draft with Follow-up selected beside the image picker and a single send arrow."></a>
@@ -94,9 +94,11 @@ Update the sample scenario in the script when the illustrated journey changes.
 
 The composer starts with +, text and Send on one compact row inside a rounded
 surface. Screens narrower than 640px also show a 44px sessions handle: tap it or drag
-right to open the drawer without swiping inside editable text. A nonempty draft or an
-available busy-mode selector gets a full-width editor above the action row, with leading
-space reserved for that handle. An empty idle draft restores the compact row. Text grows upward
+right to open the drawer without swiping inside editable text. Short drafts use all the
+available editor width on that compact row. Once text wraps or contains a newline, the
+editor gets a full-width row above the actions, with leading space reserved for that handle.
+Shortening the draft to fit restores the compact row. An available busy-mode selector
+keeps the editor above the actions. Text grows upward
 as it wraps and scrolls natively after a height cap. CSS owns the shell layout, with the
 composer in normal flow and the conversation in its own scroll area. One viewport adapter
 adjusts only shell geometry at normal zoom. After viewport changes, page movement, app return,

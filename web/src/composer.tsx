@@ -184,14 +184,23 @@ export function Composer({
 		const input = draftInput.current;
 		if (!input) return;
 		const sizeDraft = () => {
-			// Measure native wrapping at the actual available editor width.
+			const bar = input.closest<HTMLElement>(".composer-bar")!;
+			// Measure the compact editor first; nonempty text alone must not move the controls.
+			bar.dataset.expanded = "false";
 			input.style.height = "44px";
 			const style = getComputedStyle(input);
 			const singleLine =
 				parseFloat(style.lineHeight) +
 				parseFloat(style.paddingTop) +
 				parseFloat(style.paddingBottom);
-
+			if (
+				innerWidth < 640 &&
+				input.value &&
+				(input.value.includes("\n") ||
+					input.scrollHeight > Math.ceil(singleLine))
+			)
+				bar.dataset.expanded = "true";
+			// Expanded mobile text gets the full row before measuring its final height.
 			const height = input.value ? input.scrollHeight : singleLine;
 			input.style.height = `${Math.min(136, Math.max(44, height))}px`;
 		};
@@ -215,7 +224,7 @@ export function Composer({
 			textSize.disconnect();
 			document.fonts.removeEventListener("loadingdone", sizeDraft);
 		};
-	}, [draft, selectedKey, paired]);
+	}, [draft, selectedKey, paired, showBusyMode]);
 	// The receipt owns the uncertain outcome. Keep a separate ownership blocker
 	// visible when it is also true, rather than repeating the outcome warning.
 	const receiptShowsOutcome =
@@ -397,11 +406,7 @@ export function Composer({
 							))}
 						</div>
 					)}
-					<div
-						className="composer-bar"
-						data-draft={draft.length > 0}
-						data-busy={showBusyMode}
-					>
+					<div className="composer-bar" data-busy={showBusyMode}>
 						<button
 							type="button"
 							className="composer-drawer-handle"

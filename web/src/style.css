@@ -1599,41 +1599,42 @@ pre:focus-visible,
 		display: grid;
 		place-items: center;
 	}
-	.composer-bar:is([data-draft="true"], [data-busy="true"]) {
+	.composer-bar:is([data-expanded="true"], [data-busy="true"]) {
 		display: grid;
 		grid-template-columns: 44px 1fr auto auto;
 		gap: 4px;
 	}
-	.composer-bar:is([data-draft="true"], [data-busy="true"])
+	.composer-bar:is([data-expanded="true"], [data-busy="true"])
 		.composer-drawer-handle {
 		position: absolute;
 		left: 4px;
 		top: 4px;
 	}
-	.composer-bar:is([data-draft="true"], [data-busy="true"]) textarea {
+	.composer-bar:is([data-expanded="true"], [data-busy="true"]) textarea {
 		grid-column: 1 / -1;
 		grid-row: 1;
 		width: 100%;
 		padding-left: 56px;
 	}
-	.composer-bar:is([data-draft="true"], [data-busy="true"]) .attachment-picker {
+	.composer-bar:is([data-expanded="true"], [data-busy="true"])
+		.attachment-picker {
 		grid-column: 1;
 		grid-row: 2;
 	}
-	.composer-bar:is([data-draft="true"], [data-busy="true"]) .busy-mode {
+	.composer-bar:is([data-expanded="true"], [data-busy="true"]) .busy-mode {
 		grid-column: 2;
 		grid-row: 2;
 		justify-self: start;
 	}
-	.composer-bar:is([data-draft="true"], [data-busy="true"]) .stop-button {
+	.composer-bar:is([data-expanded="true"], [data-busy="true"]) .stop-button {
 		grid-column: 3;
 		grid-row: 2;
 	}
-	.composer-bar:is([data-draft="true"], [data-busy="true"]) .send-button {
+	.composer-bar:is([data-expanded="true"], [data-busy="true"]) .send-button {
 		grid-column: 4;
 		grid-row: 2;
 	}
-	.composer:has(:is([data-draft="true"], [data-busy="true"])) {
+	.composer:has(:is([data-expanded="true"], [data-busy="true"])) {
 		max-height: max(calc(var(--visible-height, 100dvh) * 0.45), 136px);
 	}
 	/* Remove only inter-item space; retain every disclosure and copy target. */
@@ -1662,11 +1663,11 @@ pre:focus-visible,
 		min-height: calc(109px + 1.2rem);
 	}
 	@media (max-width: 639px) {
-		.composer-bar:is([data-draft="true"], [data-busy="true"]) {
+		.composer-bar:is([data-expanded="true"], [data-busy="true"]) {
 			padding-block: 0;
 			row-gap: 0;
 		}
-		.composer-bar:is([data-draft="true"], [data-busy="true"])
+		.composer-bar:is([data-expanded="true"], [data-busy="true"])
 			.composer-drawer-handle {
 			top: 0;
 		}

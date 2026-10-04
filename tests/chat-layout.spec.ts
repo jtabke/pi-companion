@@ -339,9 +339,83 @@ for (const width of [320, 390, 900])
 				name: /^(Send|Steer)$/,
 				exact: true,
 			});
+			// The compact editor remains a native touch/paste target, not a drawer surface.
+			await draft.fill("");
+			await draft.focus();
+			expect(
+				await draft.evaluate((node) => {
+					const box = node.getBoundingClientRect();
+					const target = document.elementFromPoint(
+						box.x + box.width / 2,
+						box.y + box.height / 2,
+					);
+					const touch = {
+						identifier: 1,
+						clientX: box.x + box.width / 2,
+						clientY: box.y + box.height / 2,
+					};
+					const prevented = [];
+					for (const [type, time] of [
+						["touchstart", 1000],
+						["touchend", 1800],
+					] as const) {
+						const event = new TouchEvent(type, {
+							bubbles: true,
+							cancelable: true,
+						});
+						Object.defineProperties(event, {
+							touches: { value: type === "touchend" ? [] : [touch] },
+							changedTouches: { value: [touch] },
+							timeStamp: { value: time },
+						});
+						node.dispatchEvent(event);
+						prevented.push(event.defaultPrevented);
+					}
+					const clipboardData = new DataTransfer();
+					clipboardData.setData("text/plain", "Paste");
+					const paste = new ClipboardEvent("paste", {
+						bubbles: true,
+						cancelable: true,
+						clipboardData,
+					});
+					node.dispatchEvent(paste);
+					return {
+						editorHit: target === node,
+						prevented,
+						pastePrevented: paste.defaultPrevented,
+					};
+				}),
+			).toEqual({
+				editorHit: true,
+				prevented: [false, false],
+				pastePrevented: false,
+			});
+			await expect(draft).toBeFocused();
+			await expect(
+				page.getByRole("dialog", { name: "Live sessions" }),
+			).toBeHidden();
+			if (width < 640) {
+				// One more character after filling the compact width moves controls, not the editor node.
+				let text = "W";
+				await draft.fill(text);
+				await expect(bar).toHaveAttribute("data-expanded", "false");
+				for (
+					let count = 1;
+					count < 80 && (await bar.getAttribute("data-expanded")) === "false";
+					count++
+				) {
+					text += "W";
+					await draft.fill(text);
+				}
+				await expect(bar).toHaveAttribute("data-expanded", "true");
+				await expect(draft).toBeFocused();
+				await draft.fill(text.slice(0, -1));
+				await expect(bar).toHaveAttribute("data-expanded", "false");
+			}
 			const states = [];
 			for (const [state, text] of [
 				["empty", ""],
+				["first-letter", "H"],
 				["one-line", "Hello Pi"],
 				["explicit", "First line\nSecond line"],
 				[
@@ -399,7 +473,8 @@ for (const width of [320, 390, 900])
 			}
 			for (const boxes of states) {
 				const stacked =
-					width < 640 && !["empty", "cleared"].includes(boxes.state);
+					width < 640 &&
+					["explicit", "wrapped", "unbroken", "capped"].includes(boxes.state);
 				if (stacked) {
 					expect(boxes.editor.width, boxes.state).toBe(boxes.bar.width - 10);
 					expect(boxes.editor.y + boxes.editor.height).toBeLessThanOrEqual(
@@ -429,7 +504,15 @@ for (const width of [320, 390, 900])
 				expect(
 					boxes.bar.x + boxes.bar.width - boxes.send.x - boxes.send.width,
 				).toBe(5);
-				if (["empty", "one-line", "shortened", "cleared"].includes(boxes.state))
+				if (
+					[
+						"empty",
+						"first-letter",
+						"one-line",
+						"shortened",
+						"cleared",
+					].includes(boxes.state)
+				)
 					expect(boxes.bar.height, boxes.state).toBe(stacked ? 102 : 54);
 				expect(boxes.bar.y + boxes.bar.height).toBe(
 					states[0].bar.y + states[0].bar.height,
@@ -6020,7 +6103,7 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 	const mode = page.getByRole("combobox", { name: "Busy delivery mode" });
 	const bar = page.locator(".composer-bar");
 	async function checkTextAlignment() {
-		// A nonempty mobile draft owns the full row above the action targets.
+		// Wrapped mobile text owns the full row; short text stays between the controls.
 		await expect
 			.poll(() =>
 				draft.evaluate((node) => {
@@ -6031,7 +6114,7 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 						.getBoundingClientRect();
 					const surface = node.closest<HTMLElement>(".composer-bar")!;
 					if (
-						(surface.dataset.draft === "true" ||
+						(surface.dataset.expanded === "true" ||
 							surface.dataset.busy === "true") &&
 						innerWidth < 640
 					) {
@@ -6097,7 +6180,7 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 		}
 	}
 	for (const geometry of keyboardStates) {
-		if (geometry.state === "empty")
+		if (geometry.state === "empty" || geometry.state === "short")
 			expect(geometry.editor.x + geometry.editor.width).toBeLessThanOrEqual(
 				geometry.send.x,
 			);
@@ -6258,7 +6341,7 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 		if (request.method() === "POST") mutations.push(request.url());
 	});
 	const stop = page.getByRole("button", { name: "Stop", exact: true });
-	// Retained text keeps the same full-width surface through control changes.
+	// Retained text uses the compact idle width when it fits; busy controls stay below.
 	for (const width of [320, 390]) {
 		await page.setViewportSize({ width, height: 844 });
 		await page.evaluate(() => {
@@ -6322,9 +6405,15 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					),
 				};
 			});
-			expect(surface.height - editor.height).toBe(58);
-			expect(editor.width).toBe(surface.width - 10);
-			expect(editor.y + editor.height).toBeLessThanOrEqual(sendBox.y);
+			if (width === 390 && parent === "idle") {
+				expect(surface.height - editor.height).toBe(10);
+				expect(editor.width).toBe(surface.width - 154);
+				expect(editor.x + editor.width).toBeLessThanOrEqual(sendBox.x);
+			} else {
+				expect(surface.height - editor.height).toBe(58);
+				expect(editor.width).toBe(surface.width - 10);
+				expect(editor.y + editor.height).toBeLessThanOrEqual(sendBox.y);
+			}
 			for (const box of controls) {
 				expect(box.width).toBeGreaterThanOrEqual(44);
 				expect(box.height).toBeGreaterThanOrEqual(44);
@@ -6412,7 +6501,11 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					const sendBox = (await send.boundingBox())!;
 					const editor = (await draft.boundingBox())!;
 					const surface = (await bar.boundingBox())!;
-					if (text || (parent === "working" && !stopping)) {
+					if (
+						text.includes("\n") ||
+						(parent === "working" && !stopping) ||
+						(stopping && width === 320 && !!text)
+					) {
 						expect(editor.width).toBe(surface.width - 10);
 						expect(editor.y + editor.height).toBeLessThanOrEqual(sendBox.y);
 					} else expect(editor.x + editor.width).toBeLessThanOrEqual(sendBox.x);
