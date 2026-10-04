@@ -1,4 +1,4 @@
-import Fastify, { type FastifyRequest } from "fastify";
+import Fastify, { type FastifyRequest, type FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import staticFiles from "@fastify/static";
@@ -40,6 +40,8 @@ import {
 	limits,
 	IdentitySchema,
 	type Identity,
+	type Registration,
+	type Receipt,
 	type Snapshot,
 	type View,
 } from "../shared/protocol.js";
@@ -650,6 +652,47 @@ export async function createGateway(options: {
 			return undefined;
 		return current.registration;
 	}
+	// Text, Stop and Rename share one admitted discovery/forwarding lifetime.
+	// Each route retains its validation, payload and operation-specific guards.
+	async function forwardMutation(
+		body: BrowserText | BrowserStop | BrowserRename,
+		cookie: string,
+		reply: FastifyReply,
+		valid: () => boolean,
+		forward: (peer: Registration) => Promise<Receipt>,
+		rename = false,
+	): Promise<Receipt | FastifyReply> {
+		if (!control.enter(body.instance))
+			return reply.code(429).send({ error: "Input admission limit" });
+		let attempted = false;
+		try {
+			if (!valid())
+				return reply.code(409).send({ error: "Browser control unavailable" });
+			const peer = await discoverMutationOwner(body, cookie, rename);
+			// No await between the final synchronous gates and fixed POST initiation.
+			if (
+				!peer ||
+				stopped ||
+				!mutationLeaseValid(body, cookie, body.lease) ||
+				!valid()
+			)
+				return reply
+					.code(409)
+					.send({ error: "Selected owner or browser control unavailable" });
+			attempted = true;
+			return await forward(peer);
+		} catch {
+			if (attempted)
+				return {
+					requestId: body.requestId,
+					status: "uncertain",
+					reason: "outcome-unconfirmed",
+				};
+			return reply.code(409).send({ error: "Selected owner unavailable" });
+		} finally {
+			control.leave(body.instance);
+		}
+	}
 	app.post<{ Body: ControlRequest }>(
 		"/api/control",
 		{
@@ -698,37 +741,20 @@ export async function createGateway(options: {
 		async (req, reply) => {
 			const body = req.body,
 				cookie = req.cookies.c2!;
-			if (!control.enter(body.instance))
-				return reply.code(429).send({ error: "Input admission limit" });
-			let attempted = false;
-			try {
-				if (!body.text.trim() || !control.valid(body, cookie, body.lease))
-					return reply.code(409).send({ error: "Browser control unavailable" });
-				const peer = await discoverMutationOwner(body, cookie);
-				// Final gate after the only pre-forward asynchronous operation. No await before fixed POST initiation.
-				if (!peer || stopped || !mutationLeaseValid(body, cookie, body.lease))
-					return reply
-						.code(409)
-						.send({ error: "Selected owner or browser control unavailable" });
-				attempted = true;
-				return await sendText(options.runtime, peer, {
-					instance: body.instance,
-					generation: body.generation,
-					requestId: body.requestId,
-					text: body.text,
-					...(body.deliverAs ? { deliverAs: body.deliverAs } : {}),
-				});
-			} catch {
-				if (attempted)
-					return {
+			return forwardMutation(
+				body,
+				cookie,
+				reply,
+				() => !!body.text.trim() && control.valid(body, cookie, body.lease),
+				(peer) =>
+					sendText(options.runtime, peer, {
+						instance: body.instance,
+						generation: body.generation,
 						requestId: body.requestId,
-						status: "uncertain",
-						reason: "outcome-unconfirmed",
-					};
-				return reply.code(409).send({ error: "Selected owner unavailable" });
-			} finally {
-				control.leave(body.instance);
-			}
+						text: body.text,
+						...(body.deliverAs ? { deliverAs: body.deliverAs } : {}),
+					}),
+			);
 		},
 	);
 	app.post<{ Body: BrowserStop }>(
@@ -750,39 +776,22 @@ export async function createGateway(options: {
 		async (req, reply) => {
 			const body = req.body,
 				cookie = req.cookies.c2!;
-			if (!control.enter(body.instance))
-				return reply.code(429).send({ error: "Input admission limit" });
-			let attempted = false;
-			const valid = () =>
-				!stopped &&
-				!req.raw.aborted &&
-				!reply.raw.destroyed &&
-				mutationLeaseValid(body, cookie, body.lease);
-			try {
-				if (!valid())
-					return reply.code(409).send({ error: "Browser control unavailable" });
-				const peer = await discoverMutationOwner(body, cookie);
-				if (!peer || !valid())
-					return reply
-						.code(409)
-						.send({ error: "Selected owner or browser control unavailable" });
-				attempted = true;
-				return await sendStop(options.runtime, peer, {
-					instance: body.instance,
-					generation: body.generation,
-					requestId: body.requestId,
-				});
-			} catch {
-				if (attempted)
-					return {
+			return forwardMutation(
+				body,
+				cookie,
+				reply,
+				() =>
+					!stopped &&
+					!req.raw.aborted &&
+					!reply.raw.destroyed &&
+					mutationLeaseValid(body, cookie, body.lease),
+				(peer) =>
+					sendStop(options.runtime, peer, {
+						instance: body.instance,
+						generation: body.generation,
 						requestId: body.requestId,
-						status: "uncertain",
-						reason: "outcome-unconfirmed",
-					};
-				return reply.code(409).send({ error: "Selected owner unavailable" });
-			} finally {
-				control.leave(body.instance);
-			}
+					}),
+			);
 		},
 	);
 
@@ -807,40 +816,24 @@ export async function createGateway(options: {
 		async (req, reply) => {
 			const body = req.body,
 				cookie = req.cookies.c2!;
-			if (!control.enter(body.instance))
-				return reply.code(429).send({ error: "Input admission limit" });
-			let attempted = false;
-			const valid = () =>
-				!stopped &&
-				!req.raw.aborted &&
-				!reply.raw.destroyed &&
-				mutationLeaseValid(body, cookie, body.lease);
-			try {
-				if (!valid())
-					return reply.code(409).send({ error: "Browser control unavailable" });
-				const peer = await discoverMutationOwner(body, cookie, true);
-				if (!peer || !valid())
-					return reply
-						.code(409)
-						.send({ error: "Selected owner or browser control unavailable" });
-				attempted = true;
-				return await sendRename(options.runtime, peer, {
-					instance: body.instance,
-					generation: body.generation,
-					requestId: body.requestId,
-					name: body.name,
-				});
-			} catch {
-				if (attempted)
-					return {
+			return forwardMutation(
+				body,
+				cookie,
+				reply,
+				() =>
+					!stopped &&
+					!req.raw.aborted &&
+					!reply.raw.destroyed &&
+					mutationLeaseValid(body, cookie, body.lease),
+				(peer) =>
+					sendRename(options.runtime, peer, {
+						instance: body.instance,
+						generation: body.generation,
 						requestId: body.requestId,
-						status: "uncertain",
-						reason: "outcome-unconfirmed",
-					};
-				return reply.code(409).send({ error: "Selected owner unavailable" });
-			} finally {
-				control.leave(body.instance);
-			}
+						name: body.name,
+					}),
+				true,
+			);
 		},
 	);
 
