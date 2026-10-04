@@ -99,6 +99,30 @@ export function toolSummary(name: string, args: unknown): string {
 				.slice(0, 512)
 		: "";
 }
+function selectDisplayMessages(
+	entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>,
+) {
+	const selected = [];
+	let messageCount = 0;
+	for (let position = entries.length - 1; position >= 0; position--) {
+		const entry = entries[position];
+		const message =
+			entry.type === "message"
+				? entry.message
+				: entry.type === "custom_message" && entry.display
+					? { role: "custom" as const, content: entry.content, display: true }
+					: entry.type === "compaction" || entry.type === "branch_summary"
+						? { role: entry.type, content: entry.summary }
+						: undefined;
+		if (!message || (message.role === "custom" && !message.display)) continue;
+		messageCount++;
+		// Count earlier display entries without allocating another full-history projection.
+		if (selected.length < limits.items) selected.push({ entry, message });
+	}
+	selected.reverse();
+	return { selected, messageCount };
+}
+
 export function nativeSnapshot(
 	ctx: ExtensionContext,
 	instance: string,
@@ -145,25 +169,9 @@ export function nativeSnapshot(
 	if (commands) snapshot.commands = commands;
 	if (native?.available()) snapshot.commandModels = native.models();
 	const media = new Map<string, ReturnType<typeof inspectImage>>();
-	const entries = ctx.sessionManager.getBranch();
-	const selected = [];
-	let messageCount = 0;
-	for (let position = entries.length - 1; position >= 0; position--) {
-		const entry = entries[position];
-		const message =
-			entry.type === "message"
-				? entry.message
-				: entry.type === "custom_message" && entry.display
-					? { role: "custom" as const, content: entry.content, display: true }
-					: entry.type === "compaction" || entry.type === "branch_summary"
-						? { role: entry.type, content: entry.summary }
-						: undefined;
-		if (!message || (message.role === "custom" && !message.display)) continue;
-		messageCount++;
-		// Count earlier display entries without allocating another full-history projection.
-		if (selected.length < limits.items) selected.push({ entry, message });
-	}
-	selected.reverse();
+	const { selected, messageCount } = selectDisplayMessages(
+		ctx.sessionManager.getBranch(),
+	);
 	const calls = new Map<string, string>();
 	for (const { message } of selected) {
 		if (message.role !== "assistant") continue;
@@ -174,16 +182,8 @@ export function nativeSnapshot(
 	}
 	let textRemaining: number = limits.text,
 		imageBytes = 0;
-	snapshot.omittedItems = messageCount - selected.length;
-	if (snapshot.omittedItems) snapshot.truncated = true;
-	// Allocate to the newest messages first, then restore chronological display order.
-	for (let position = selected.length - 1; position >= 0; position--) {
-		if (!textRemaining) {
-			snapshot.omittedItems += position + 1;
-			snapshot.truncated = true;
-			break;
-		}
-		const { entry, message } = selected[position];
+	// One snapshot-owned allocator: message projection spends the same text and image budgets.
+	function projectBlocks({ entry, message }: (typeof selected)[number]) {
 		// Native branch messages are finalized; live partial assistant messages are not read here.
 		const blocks: Block[] = [];
 		const details: unknown =
@@ -288,6 +288,19 @@ export function nativeSnapshot(
 				text: "Additional content omitted from this message.",
 			});
 		}
+		return blocks;
+	}
+	snapshot.omittedItems = messageCount - selected.length;
+	if (snapshot.omittedItems) snapshot.truncated = true;
+	// Allocate to the newest messages first, then restore chronological display order.
+	for (let position = selected.length - 1; position >= 0; position--) {
+		if (!textRemaining) {
+			snapshot.omittedItems += position + 1;
+			snapshot.truncated = true;
+			break;
+		}
+		const { entry, message } = selected[position];
+		const blocks = projectBlocks(selected[position]);
 		snapshot.items.push({
 			id: `${generation}:${entry.id}`.slice(0, 200),
 			role:
