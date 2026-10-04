@@ -730,7 +730,7 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 		.getByRole("button", { name: "Retry same outstanding input" })
 		.click();
 
-	expect(sent).toHaveLength(2);
+	await expect.poll(() => sent.length).toBe(2);
 	expect(sent[1].requestId).toBe(sent[0].requestId);
 	expect(sent[1].text).toBe(sent[0].text);
 	expect(await count()).toBe(before + 1);
@@ -1153,7 +1153,7 @@ for (const width of [320, 390])
 			.getByRole("button", { name: "Retry same outstanding input" })
 			.click();
 
-		expect(sent).toHaveLength(2);
+		await expect.poll(() => sent.length).toBe(2);
 		expect(sent[1].requestId).toBe(sent[0].requestId);
 		expect(sent[1].images).toEqual(sent[0].images);
 		expect(sent[1].text).toBe("local text");
