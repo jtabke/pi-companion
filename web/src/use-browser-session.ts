@@ -505,7 +505,7 @@ export function useBrowserSession({
 					? "Busy text unavailable — fully restart the owning Pi to load the updated bridge."
 					: attachment
 						? "Pi is busy — images stay local; remove the image to request Steer or Follow-up."
-						: "Pi is busy — Send steers; hold Send or use Alt+Enter for Follow-up. Completion unconfirmed.";
+						: "Pi is busy — choose Steer or Follow-up beside +, then Send. Alt+Enter requests Follow-up. Completion unconfirmed.";
 	}
 	if (reachable && !operating && !outstanding && slashNotice)
 		composerAvailability = slashNotice;

@@ -261,6 +261,12 @@ for (const width of [320, 390, 900])
 				actionHeight: actions.getBoundingClientRect().height,
 				copyWidth: copy.getBoundingClientRect().width,
 				copyHeight: copy.getBoundingClientRect().height,
+				copyIconWidth: copy.querySelector("svg")!.getBoundingClientRect().width,
+				copyIconHeight: copy.querySelector("svg")!.getBoundingClientRect()
+					.height,
+				copyIconInset:
+					copy.querySelector("svg")!.getBoundingClientRect().left -
+					message.getBoundingClientRect().left,
 				actionGap:
 					actions.getBoundingClientRect().top -
 					paragraphs.at(-1)!.getBoundingClientRect().bottom,
@@ -282,11 +288,11 @@ for (const width of [320, 390, 900])
 			};
 		});
 		expect(density.contentWidth).toBe(width === 900 ? 756 : width - 32);
-		expect(density.userInset).toBe(10);
+		expect(density.userInset).toBe(8);
 		expect(density.codeInset).toBe(8);
-		expect(density.messageGap).toBe(width === 900 ? 20 : 12);
-		// Native paragraphs retain their line count; Copy answer owns a distinct
-		// 44px target and the existing 4px paragraph margin, not decorative padding.
+		expect(density.messageGap).toBe(width === 900 ? 12 : 8);
+		// A small Copy icon sits just below the answer, aligned with the text.
+		// Its visual size must not shrink the native touch target.
 		expect(density.paragraphHeights).toHaveLength(2);
 		expect(density.paragraphHeights[0]).toBeCloseTo(
 			width === 900 ? 25.6 : 51.2,
@@ -296,11 +302,12 @@ for (const width of [320, 390, 900])
 		expect(density.actionHeight).toBe(44);
 		expect(density.copyWidth).toBe(44);
 		expect(density.copyHeight).toBe(44);
+		expect(density.copyIconWidth).toBe(16);
+		expect(density.copyIconHeight).toBe(16);
+		expect(density.copyIconInset).toBe(0);
 		expect(density.actionGap).toBe(4);
 		expect(density.messageHeight).toBeCloseTo(
-			density.paragraphHeights.reduce((total, height) => total + height, 0) +
-				8 +
-				density.actionHeight,
+			density.paragraphHeights[0] + 25.6 + 8 + 44,
 			1,
 		);
 		expect(density.fontSize).toBe("16px");
@@ -386,7 +393,7 @@ for (const width of [320, 390, 900])
 				const stacked =
 					width < 640 && !["empty", "cleared"].includes(boxes.state);
 				if (stacked) {
-					expect(boxes.editor.width, boxes.state).toBe(boxes.bar.width - 14);
+					expect(boxes.editor.width, boxes.state).toBe(boxes.bar.width - 10);
 					expect(boxes.editor.y + boxes.editor.height).toBeLessThanOrEqual(
 						boxes.picker.y,
 					);
@@ -401,12 +408,12 @@ for (const width of [320, 390, 900])
 						boxes.picker.y + boxes.picker.height,
 					);
 				}
-				expect(boxes.picker.x - boxes.bar.x).toBe(7);
+				expect(boxes.picker.x - boxes.bar.x).toBe(5);
 				expect(
 					boxes.bar.x + boxes.bar.width - boxes.send.x - boxes.send.width,
-				).toBe(7);
+				).toBe(5);
 				if (["empty", "one-line", "shortened", "cleared"].includes(boxes.state))
-					expect(boxes.bar.height, boxes.state).toBe(stacked ? 106 : 58);
+					expect(boxes.bar.height, boxes.state).toBe(stacked ? 102 : 54);
 				expect(boxes.bar.y + boxes.bar.height).toBe(
 					states[0].bar.y + states[0].bar.height,
 				);
@@ -420,7 +427,7 @@ for (const width of [320, 390, 900])
 				expect(boxes.reader.height).toBeGreaterThanOrEqual(300);
 			}
 			// Actual full-width wrapping responds to text size and width without typing.
-			await draft.fill("Medium draft text ".repeat(4));
+			await draft.fill("Medium draft text ".repeat(5));
 			const normalHeight = (await draft.boundingBox())!.height;
 			await page.evaluate(() => {
 				document.documentElement.style.fontSize = "200%";
@@ -598,7 +605,11 @@ for (const width of [320, 390, 900])
 										top + (bottom - top) / 2,
 									);
 									if (!target || !other.contains(target))
-										blocked.push(other.textContent ?? other.tagName);
+										blocked.push(
+											other.getAttribute("aria-label") ??
+												other.textContent ??
+												other.tagName,
+										);
 								}
 							}
 						}
@@ -793,8 +804,19 @@ for (const width of [320, 390, 900])
 			expect(
 				await jump.evaluate((node) => node.matches(":focus-visible")),
 			).toBe(true);
-			const composerBox = (await composer.boundingBox())!;
-			expect(jumpBox.y + jumpBox.height + 6).toBeLessThanOrEqual(composerBox.y);
+			// Focus can settle the visual viewport on the next frame. Compare
+			// both controls in the same layout, not the pre-focus jump position.
+			await expect
+				.poll(() =>
+					jump.evaluate((node) => {
+						const jump = node.getBoundingClientRect();
+						const composer = document
+							.querySelector(".composer")!
+							.getBoundingClientRect();
+						return composer.y - jump.bottom;
+					}),
+				)
+				.toBeGreaterThanOrEqual(6);
 			await page.screenshot({
 				path: testInfo.outputPath(`recovery-${width}-jump-focused-dark.png`),
 			});
@@ -1160,6 +1182,42 @@ for (const width of [320, 390, 900])
 				changedTouches: [{ identifier: 1, clientX: 100, clientY: 200 }],
 			});
 			await expect(draft).toBeFocused();
+			if (browserName === "chromium") {
+				// Use native touch dispatch: synthetic touch events cannot prove
+				// the browser cancels a button click after scrolling across Send.
+				const send = composer.locator(".send-button");
+				await expect(send).toBeEnabled();
+				const box = (await send.boundingBox())!;
+				const input = await context.newCDPSession(page);
+				await input.send("Emulation.setTouchEmulationEnabled", {
+					enabled: true,
+				});
+				try {
+					const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+					await input.send("Input.dispatchTouchEvent", {
+						type: "touchStart",
+						touchPoints: [point],
+					});
+					for (const dy of [-30, -90, -30, 0])
+						await input.send("Input.dispatchTouchEvent", {
+							type: "touchMove",
+							touchPoints: [{ ...point, y: point.y + dy }],
+						});
+					await input.send("Input.dispatchTouchEvent", {
+						type: "touchEnd",
+						touchPoints: [],
+					});
+				} finally {
+					await input.send("Emulation.setTouchEmulationEnabled", {
+						enabled: false,
+					});
+					await input.detach();
+				}
+				await expect(draft).toHaveValue(longDraft);
+				await expect(
+					page.getByRole("img", { name: "Local attachment preview" }),
+				).toBeVisible();
+			}
 			expect(mutations).toHaveLength(postsBefore);
 			await page.getByRole("button", { name: /^Remove image/ }).click();
 			await draft.fill("");
@@ -1289,6 +1347,19 @@ for (const width of [320, 390, 900])
 		await expect(menu).not.toContainText("⌄");
 		await page.keyboard.press("Enter");
 		await expect(sidebar).toBeVisible();
+		const initialDrawer = await sidebar.evaluate((node) => ({
+			scrollTop: node.scrollTop,
+			headingBottom: node
+				.querySelector(".sidebar-heading")!
+				.getBoundingClientRect().bottom,
+			selectedTop: node
+				.querySelector(".session-list-note")!
+				.getBoundingClientRect().top,
+		}));
+		expect(initialDrawer.scrollTop).toBe(0);
+		expect(
+			initialDrawer.selectedTop - initialDrawer.headingBottom,
+		).toBeGreaterThanOrEqual(4);
 		await page.keyboard.press("Escape");
 		await expect(sidebar).toBeHidden();
 		await expect(menu).toBeFocused();
@@ -1673,10 +1744,11 @@ for (const width of [320, 390, 900])
 		await expect(sidebar).toBeVisible();
 		await page.evaluate(() => window.getSelection()?.removeAllRanges());
 		if (width < 640) {
-			const row = ".session-sidebar .session-card:nth-of-type(2) > button";
-			const details = ".session-sidebar .directory-details summary";
+			const row =
+				".session-sidebar .session-card:nth-of-type(2) > button:not(.rename-session)";
+			const path = ".session-sidebar .directory-path-trigger";
 			for (const selector of [
-				details,
+				path,
 				row,
 				'.session-sidebar button:has-text("Forget this device")',
 			]) {
@@ -1733,46 +1805,28 @@ for (const width of [320, 390, 900])
 				await expect(sidebar).toBeVisible();
 				expect(new URL(page.url()).hash).toBe(selectionBeforeSwipe);
 			}
-			// Keyboard activation and an actual mouse click are not compatibility clicks.
-			await swipe(details, [
-				[180, 100],
-				[150, 102],
-			]);
-			await page.locator(details).focus();
-			await page.keyboard.press("Enter");
-			await expect(page.locator(details).locator("..")).toHaveAttribute(
-				"open",
-				"",
-			);
-			expect(await compatibilityClick(details)).toBe(true);
-			await swipe(details, [
-				[180, 100],
-				[150, 102],
-			]);
-			await page.locator(details).click();
-			await expect(page.locator(details).locator("..")).not.toHaveAttribute(
-				"open",
-			);
-			// A new touch clears suppression, even when the previous swipe was short.
+			// Path controls keep native touch behavior; they cannot claim a drawer swipe.
 			expect(
-				await swipe(details, [
+				await swipe(path, [
 					[180, 100],
-					[150, 102],
+					[90, 100],
 				]),
-			).toContain(true);
-			await swipe(details, [[180, 100]]);
-			expect(await compatibilityClick(details)).toBe(false);
-			await expect(page.locator(details).locator("..")).toHaveAttribute(
-				"open",
-				"",
+			).not.toContain(true);
+			await expect(sidebar).toBeVisible();
+			await expect(sidebar.locator(".directory-path:popover-open")).toHaveCount(
+				0,
 			);
-			await page.locator(details).focus();
-			await page.keyboard.press("Space");
-			await expect(page.locator(details).locator("..")).not.toHaveAttribute(
-				"open",
-			);
+			// A new touch clears row-click suppression, even after a short swipe.
+			await swipe(row, [
+				[180, 100],
+				[150, 102],
+			]);
+			await swipe(row, [[180, 100]]);
+			expect(await compatibilityClick(row)).toBe(false);
+			await expect(menu).toBeFocused();
+			await menu.click();
 			// Diagonal drift after the horizontal claim no longer discards intent.
-			for (const selector of [row, details]) {
+			for (const selector of [row]) {
 				expect(
 					await swipe(selector, [
 						[180, 100],
@@ -2100,14 +2154,24 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 		"Pi is working",
 		"Pi idle",
 	]);
+	await expect(home.locator(".directory-parent")).toHaveText([
+		"/workspace/team-a",
+		"/workspace/team-b",
+	]);
+	await expect(home.locator(".directory-title h3")).toHaveText([
+		"Observed project",
+		"Observed project",
+		"Working directory unavailable",
+	]);
 	for (const width of [320, 390]) {
 		await page.setViewportSize({ width, height: 568 });
 		for (const theme of ["light", "dark"] as const) {
 			await page.emulateMedia({ colorScheme: theme });
-			for (const enlarged of [false, true]) {
-				await page.evaluate((enlarged) => {
-					document.documentElement.style.fontSize = enlarged ? "125%" : "";
-				}, enlarged);
+			for (const size of ["100%", "125%", "200%"]) {
+				const enlarged = size !== "100%";
+				await page.evaluate((size) => {
+					document.documentElement.style.fontSize = size;
+				}, size);
 				expect(
 					await home.evaluate((node) => node.scrollWidth <= node.clientWidth),
 				).toBe(true);
@@ -2120,9 +2184,21 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 					await home.locator(".session-card").all()
 				).entries()) {
 					const box = (await row.boundingBox())!;
-					expect(box.height).toBeLessThanOrEqual(enlarged ? 100 : 80);
-					if (!enlarged || index < 3)
-						expect(box.y + box.height).toBeLessThanOrEqual(548);
+					if (size !== "200%") {
+						expect(box.height).toBeLessThanOrEqual(enlarged ? 100 : 80);
+						if (!enlarged || index < 3)
+							expect(box.y + box.height).toBeLessThanOrEqual(548);
+					}
+					expect(
+						await row.evaluate(
+							(node) =>
+								node.getBoundingClientRect().left -
+								node
+									.closest(".session-directory")!
+									.querySelector(".directory-title")!
+									.getBoundingClientRect().left,
+						),
+					).toBeCloseTo(0, 0);
 					expect(
 						(await row.getByRole("button").boundingBox())!.height,
 					).toBeGreaterThanOrEqual(44);
@@ -2132,9 +2208,7 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 					await expect(row.locator("details")).toHaveCount(0);
 				}
 				await page.screenshot({
-					path: testInfo.outputPath(
-						`home-${width}-${theme}-${enlarged ? "enlarged" : "ordinary"}.png`,
-					),
+					path: testInfo.outputPath(`home-${width}-${theme}-${size}.png`),
 				});
 				await menu.click();
 				expect(
@@ -2161,7 +2235,7 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 				}
 				await page.screenshot({
 					path: testInfo.outputPath(
-						`grouped-drawer-${width}-${theme}-${enlarged ? "enlarged" : "ordinary"}.png`,
+						`grouped-drawer-${width}-${theme}-${size}.png`,
 					),
 				});
 				await sidebar.getByRole("button", { name: "Close sessions" }).click();
@@ -2202,10 +2276,12 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 		"Unknown time",
 	]);
 	await expect(
-		sidebar.getByText("4 live terminals · Background unobserved", {
+		sidebar.getByText("4 live terminals", {
 			exact: true,
 		}),
 	).toBeVisible();
+	// Compact content may fit in portrait; a short viewport still needs sticky Close.
+	await page.setViewportSize({ width: 320, height: 320 });
 	await sidebar.evaluate((node) => {
 		node.scrollTop = node.scrollHeight;
 	});
@@ -2213,7 +2289,7 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 	const close = sidebar.getByRole("button", { name: "Close sessions" });
 	const closeBox = (await close.boundingBox())!;
 	expect(closeBox.y).toBeGreaterThanOrEqual(0);
-	expect(closeBox.y + closeBox.height).toBeLessThanOrEqual(568);
+	expect(closeBox.y + closeBox.height).toBeLessThanOrEqual(320);
 	expect(
 		await close.evaluate((node) => {
 			const box = node.getBoundingClientRect();
@@ -2228,19 +2304,41 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 	await sidebar.evaluate((node) => {
 		node.scrollTop = 0;
 	});
+	await page.setViewportSize({ width: 320, height: 568 });
 	for (const cwd of [
 		"/workspace/team-a/Observed project",
 		"/workspace/team-b/Observed project",
 	]) {
 		const directory = sidebar.getByRole("region", { name: cwd, exact: true });
-		const disclosure = directory.getByLabel(`Working directory: ${cwd}`, {
+		const disclosure = directory.getByLabel(`Full path: ${cwd}`, {
 			exact: true,
 		});
+		await expect(disclosure).toHaveText("Full path");
+		expect((await disclosure.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+		await expect(directory.locator(".session-card").first()).toBeVisible();
 		await expect(directory.getByText(cwd, { exact: true })).toBeHidden();
 		await disclosure.focus();
 		await page.keyboard.press("Enter");
-		await expect(directory.getByText(cwd, { exact: true })).toBeVisible();
+		const popup = directory.getByRole("dialog", {
+			name: `Working directory: ${cwd}`,
+			exact: true,
+		});
+		await expect(popup.getByText(cwd, { exact: true })).toBeVisible();
+		await expect(disclosure).toBeFocused();
+		await expect(directory.locator(".session-card").first()).toBeVisible();
+		await page.keyboard.press("Escape");
+		await expect(popup).toBeHidden();
+		await expect(sidebar).toBeVisible();
+		await expect(disclosure).toBeFocused();
+		await disclosure.click();
+		await popup.getByRole("button", { name: "Close full path" }).focus();
 		await page.keyboard.press("Enter");
+		await expect(popup).toBeHidden();
+		await disclosure.click();
+		const bounds = (await sidebar.boundingBox())!;
+		await page.mouse.click(bounds.x + 2, bounds.y + bounds.height - 4);
+		await expect(popup).toBeHidden();
+		await expect(sidebar).toBeVisible();
 	}
 	const nativeRow = sidebar.getByRole("group", {
 		name: "Newest question · Observed project",
@@ -2398,16 +2496,27 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 	});
 	const longPath =
 		"/workspace/" + "long-directory-".repeat(18) + "/Observed project";
-	await sidebar
-		.getByLabel(`Working directory: ${longPath}`, { exact: true })
-		.click();
+	await sidebar.getByLabel(`Full path: ${longPath}`, { exact: true }).click();
 	await expect(sidebar.getByText(longPath, { exact: true })).toBeVisible();
+	const longPopup = sidebar.getByRole("dialog", {
+		name: `Working directory: ${longPath}`,
+		exact: true,
+	});
+	expect(
+		await longPopup.evaluate((node) => node.scrollWidth <= node.clientWidth),
+	).toBe(true);
+	const pathBox = (await longPopup.boundingBox())!;
+	expect(pathBox.x).toBeGreaterThanOrEqual(0);
+	expect(pathBox.x + pathBox.width).toBeLessThanOrEqual(320);
 	expect(
 		await sidebar.evaluate((node) => node.scrollWidth <= node.clientWidth),
 	).toBe(true);
 	await page.screenshot({
 		path: testInfo.outputPath("cwd-groups-320-enlarged.png"),
 	});
+	await page.keyboard.press("Escape");
+	await expect(longPopup).toBeHidden();
+	await expect(sidebar).toBeVisible();
 	await sidebar.getByRole("button", { name: "Close sessions" }).click();
 	await expect(menu).toBeFocused();
 	await home
@@ -2636,11 +2745,11 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 		name: "Newest question · Observed project",
 	});
 	await expect(selectedRow.locator("details")).toHaveCount(0);
-	await expect(selectedRow.getByRole("button")).toHaveAttribute(
-		"aria-current",
-		"true",
-	);
-	await expect(selectedRow.getByRole("button")).toContainText("Pi idle");
+	const selectedButton = selectedRow.getByRole("button", {
+		name: /^Newest question Observed project/,
+	});
+	await expect(selectedButton).toHaveAttribute("aria-current", "true");
+	await expect(selectedButton).toContainText("Pi idle");
 	await sidebar.getByRole("button", { name: "Close sessions" }).click();
 	await expect(sidebar).toBeHidden();
 	await update({ parent: "working" });
@@ -2791,7 +2900,9 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 		});
 		await expect(rows).toHaveCount(2);
 		await expect(
-			rows.nth(instance === sessions[0].instance ? 0 : 1).getByRole("button"),
+			rows
+				.nth(instance === sessions[0].instance ? 0 : 1)
+				.getByRole("button", { name: /^Tied idle Observed project/ }),
 		).toHaveAttribute("aria-current", "true");
 		await expect(sidebar.locator('[aria-current="true"]')).toHaveCount(1);
 		await sidebar.getByRole("button", { name: "Close sessions" }).click();
@@ -3609,11 +3720,6 @@ for (const width of [320, 390])
 				await expect(
 					sidebar.getByRole("button", { name: /Exact terminal/ }),
 				).toContainText(activity);
-				await expect(
-					sidebar
-						.getByRole("region", { name: "Input details" })
-						.getByText(explanation, { exact: true }),
-				).toBeVisible();
 				await sidebar.getByRole("button", { name: "Close sessions" }).click();
 				await expect(sidebar).toBeHidden();
 			}
@@ -3623,13 +3729,13 @@ for (const width of [320, 390])
 			const send = (await page
 				.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
 				.boundingBox())!;
-			// Retained drafts may wrap when Stop narrows the editor at 320px.
+			// Retained mobile drafts use the full editor row above the actions.
 			expect(editor.height).toBeGreaterThanOrEqual(44);
 			expect(editor.height).toBeLessThanOrEqual(136);
-			expect((await page.locator(".composer-bar").boundingBox())!.height).toBe(
-				Math.max(44, editor.height) + 14,
-			);
-			expect(editor.y + editor.height).toBe(send.y + send.height);
+			const bar = (await page.locator(".composer-bar").boundingBox())!;
+			expect(bar.height).toBe(editor.height + 44 + 14);
+			expect(editor.width).toBeCloseTo(bar.width - 10, 0);
+			expect(editor.y + editor.height + 4).toBeCloseTo(send.y, 0);
 			await page.screenshot({
 				path: testInfo.outputPath(`availability-${width}-${activity}.png`),
 			});
@@ -3679,10 +3785,8 @@ for (const width of [320, 390])
 		}
 		await picker.click();
 		await expect(
-			sidebar
-				.getByRole("region", { name: "Input details" })
-				.getByText(/Disconnected — cached content/),
-		).toBeVisible();
+			sidebar.getByRole("region", { name: "Input details" }),
+		).toHaveCount(0);
 		await sidebar.getByRole("button", { name: "Close sessions" }).click();
 		await expect(sidebar).toBeHidden();
 		await expect(page.locator("article")).toContainText(
@@ -5780,10 +5884,8 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 		exact: true,
 	});
 	const attachment = page.getByLabel("Images for selected Pi (local picker)");
-	const send = page.getByRole("button", {
-		name: /^(Send|Steer)$/,
-		exact: true,
-	});
+	const send = page.locator(".send-button");
+	const mode = page.getByRole("combobox", { name: "Busy delivery mode" });
 	const bar = page.locator(".composer-bar");
 	async function checkTextAlignment() {
 		// A nonempty mobile draft owns the full row above the action targets.
@@ -5796,9 +5898,13 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 						.querySelector(".send-button")!
 						.getBoundingClientRect();
 					const surface = node.closest<HTMLElement>(".composer-bar")!;
-					if (surface.dataset.draft === "true" && innerWidth < 640) {
+					if (
+						(surface.dataset.draft === "true" ||
+							surface.dataset.busy === "true") &&
+						innerWidth < 640
+					) {
 						return (
-							Math.abs(editor.width - surface.clientWidth + 12) <= 0.5 &&
+							Math.abs(editor.width - surface.clientWidth + 8) <= 0.5 &&
 							editor.bottom <= control.y
 						);
 					}
@@ -5864,7 +5970,7 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 				geometry.send.x,
 			);
 		else {
-			expect(geometry.editor.width).toBe(geometry.bar.width - 14);
+			expect(geometry.editor.width).toBe(geometry.bar.width - 10);
 			expect(geometry.editor.y + geometry.editor.height).toBeLessThanOrEqual(
 				geometry.send.y,
 			);
@@ -6084,8 +6190,8 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					),
 				};
 			});
-			expect(surface.height - editor.height).toBe(62);
-			expect(editor.width).toBe(surface.width - 14);
+			expect(surface.height - editor.height).toBe(58);
+			expect(editor.width).toBe(surface.width - 10);
 			expect(editor.y + editor.height).toBeLessThanOrEqual(sendBox.y);
 			for (const box of controls) {
 				expect(box.width).toBeGreaterThanOrEqual(44);
@@ -6174,12 +6280,13 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					const sendBox = (await send.boundingBox())!;
 					const editor = (await draft.boundingBox())!;
 					const surface = (await bar.boundingBox())!;
-					if (text) {
-						expect(editor.width).toBe(surface.width - 14);
+					if (text || (parent === "working" && !stopping)) {
+						expect(editor.width).toBe(surface.width - 10);
 						expect(editor.y + editor.height).toBeLessThanOrEqual(sendBox.y);
 					} else expect(editor.x + editor.width).toBeLessThanOrEqual(sendBox.x);
 					await checkTextAlignment();
-					if (!text && !enlarged) expect(surface.height).toBe(58);
+					if (!text && !enlarged && parent === "idle")
+						expect(surface.height).toBe(54);
 					expect(
 						await page
 							.locator(".chat-scroll")
@@ -6242,16 +6349,9 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 									`chrome-${width}-${theme}-${enlarged ? "125" : "ordinary"}-send-focus.png`,
 								),
 							});
-							await send.press("ArrowDown");
-							await expect(
-								page.getByRole("button", { name: "Follow-up", exact: true }),
-							).toBeVisible();
-							await page.screenshot({
-								path: testInfo.outputPath(
-									`chrome-${width}-${theme}-${enlarged ? "125" : "ordinary"}-options.png`,
-								),
-							});
-							await page.keyboard.press("Escape");
+							await mode.focus();
+							await expect(mode).toBeFocused();
+							await expect(mode).toHaveCSS("outline-style", "solid");
 						}
 					}
 				}
@@ -6296,20 +6396,16 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 			await expect(
 				page.getByRole("button", { name: "Jump to latest" }),
 			).toBeVisible();
-			for (const open of [false, true]) {
-				if (open) await send.press("ArrowDown");
+			for (const delivery of ["steer", "followUp"] as const) {
+				await mode.selectOption(delivery);
 				for (const theme of ["light", "dark"] as const) {
 					await page.emulateMedia({ colorScheme: theme });
 					const targets = [
 						send,
 						stop,
-
+						mode,
 						page.getByRole("button", { name: "Jump to latest" }),
 					];
-					if (open)
-						targets.push(
-							page.getByRole("button", { name: "Follow-up", exact: true }),
-						);
 					for (const control of targets) {
 						const box = (await control.boundingBox())!;
 						expect(box.width).toBeGreaterThanOrEqual(44);
@@ -6338,20 +6434,8 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					expect(noticeBox.height).toBeGreaterThanOrEqual(
 						(parseFloat(size) / 100) * 16 * 1.2,
 					);
-					if (open) {
-						const followUp = page.getByRole("button", {
-							name: "Follow-up",
-							exact: true,
-						});
-						expect(noticeBox.x + noticeBox.width + 4).toBeLessThanOrEqual(
-							(await followUp.boundingBox())!.x,
-						);
-						await followUp.focus();
-						await page.keyboard.press(tab);
-						await page.keyboard.press(previous);
-						await expect(followUp).toBeFocused();
-						await expect(followUp).toHaveCSS("outline-style", "solid");
-					}
+					await mode.focus();
+					await expect(mode).toHaveCSS("outline-style", "solid");
 					await notices.evaluate((node) => {
 						node.scrollTop = node.scrollHeight;
 					});
@@ -6388,7 +6472,13 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					});
 					console.log(
 						"CONSTRAINED_NATIVE_EDITOR",
-						JSON.stringify({ browserName, width, size, open, ...nativeEditor }),
+						JSON.stringify({
+							browserName,
+							width,
+							size,
+							delivery,
+							...nativeEditor,
+						}),
 					);
 					expect(nativeEditor.scrollHeight).toBeGreaterThan(
 						nativeEditor.clientHeight,
@@ -6411,13 +6501,9 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 							width,
 							size,
 							theme,
-							open,
+							delivery,
 							notices: noticeBox,
-							option: open
-								? await page
-										.getByRole("button", { name: "Follow-up", exact: true })
-										.boundingBox()
-								: null,
+							mode: await mode.boundingBox(),
 							reader,
 							bar: await bar.boundingBox(),
 							composer: await page.locator(".composer").boundingBox(),
@@ -6425,11 +6511,10 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					);
 					await page.screenshot({
 						path: testInfo.outputPath(
-							`constrained-${width}-${size}-${theme}-${open ? "options" : "closed"}.png`,
+							`constrained-${width}-${size}-${theme}-${delivery}.png`,
 						),
 					});
 				}
-				if (open) await page.keyboard.press("Escape");
 			}
 			for (const [changes, reason] of [
 				[{ parent: "working", busyText: false }, "fully restart the owning Pi"],
@@ -6649,11 +6734,22 @@ for (const input of ["mouse", "touch"] as const)
 				selected.evaluate((node) => ({
 					background: getComputedStyle(node).backgroundColor,
 					shadow: getComputedStyle(node).boxShadow,
+					cardBackground: getComputedStyle(node.parentElement!).backgroundColor,
+					pencilBackground: getComputedStyle(
+						node.parentElement!.querySelector(".rename-session")!,
+					).backgroundColor,
 				}));
 			for (const theme of ["light", "dark"] as const) {
 				await page.emulateMedia({ colorScheme: theme });
 				const stable = await appearance();
-				expect(stable.shadow).not.toBe("none");
+				expect(stable.shadow).toBe("none");
+				expect(stable.background).toBe("rgba(0, 0, 0, 0)");
+				expect(stable.pencilBackground).toBe("rgba(0, 0, 0, 0)");
+				expect(stable.cardBackground).not.toBe(
+					await other.evaluate(
+						(node) => getComputedStyle(node.parentElement!).backgroundColor,
+					),
+				);
 				expect(
 					await other.evaluate((node) => getComputedStyle(node).boxShadow),
 				).toBe("none");
@@ -6667,6 +6763,10 @@ for (const input of ["mouse", "touch"] as const)
 							(node) => getComputedStyle(node).backgroundColor,
 						),
 					).not.toBe(plain);
+					await sidebar
+						.getByRole("button", { name: "Rename session", exact: true })
+						.hover();
+					expect(await appearance()).toEqual(stable);
 					await selected.hover();
 					expect(await appearance()).toEqual(stable);
 					await page.mouse.down();
@@ -6794,15 +6894,21 @@ test.describe("mobile viewport sizing", () => {
 						Object.assign(viewport, { height, offsetTop, scale });
 						if (event === "resize" || event === "scroll")
 							viewport.dispatchEvent(new Event(event));
-						else if (event === "visibilitychange")
+						else if (
+							["visibilitychange", "focusin", "focusout"].includes(event)
+						)
 							document.dispatchEvent(new Event(event));
-						else
+						else if (event !== "silent")
 							window.dispatchEvent(
 								new Event(event === "window-resize" ? "resize" : event),
 							);
 					},
 				});
 			}, owner);
+			const posts: string[] = [];
+			page.on("request", (request) => {
+				if (request.method() === "POST") posts.push(request.url());
+			});
 			await page.goto("/");
 			await chooseSession(page, owner.instance);
 			const draft = page.getByLabel("Text for selected Pi (local draft)");
@@ -6891,6 +6997,78 @@ test.describe("mobile viewport sizing", () => {
 				await metrics(844, 0, event);
 				await checkBounds(844, 0);
 			}
+			// WebKit can publish the final measurements after the notifying event.
+			// Do not emit another event when the next frame updates the measurements.
+			for (const event of [
+				"resize",
+				"pageshow",
+				"visibilitychange",
+				"focus",
+				"orientationchange",
+				"focusin",
+				"focusout",
+			]) {
+				await page.evaluate(async (event) => {
+					const set = (
+						window as unknown as {
+							setViewportMetrics: (
+								height: number,
+								top: number,
+								event: string,
+							) => void;
+						}
+					).setViewportMetrics;
+					set(300, 64, event);
+					await new Promise<void>((resolve) =>
+						requestAnimationFrame(() => {
+							set(844, 0, "silent");
+							resolve();
+						}),
+					);
+				}, event);
+				await checkBounds(844, 0);
+				await expect(draft).toHaveValue("Hello Pi");
+			}
+			// Focus/blur alone must recover late keyboard measurements without refocusing.
+			for (const focused of [true, false]) {
+				await page.evaluate(async (focused) => {
+					const set = (
+						window as unknown as {
+							setViewportMetrics: (
+								height: number,
+								top: number,
+								event: string,
+							) => void;
+						}
+					).setViewportMetrics;
+					set(focused ? 844 : 300, focused ? 0 : 64, "silent");
+					const input = document.querySelector<HTMLTextAreaElement>("#draft")!;
+					if (focused) input.focus();
+					else input.blur();
+					await new Promise<void>((resolve) =>
+						requestAnimationFrame(() => {
+							set(focused ? 300 : 844, focused ? 64 : 0, "silent");
+							resolve();
+						}),
+					);
+				}, focused);
+				await checkBounds(focused ? 300 : 844, focused ? 64 : 0);
+				if (focused) await expect(draft).toBeFocused();
+				else await expect(draft).not.toBeFocused();
+				await expect(draft).toHaveValue("Hello Pi");
+			}
+			// Invalid transition readings must fall back, not freeze the old keyboard shell.
+			for (const [height, top, scale] of [
+				[0, 0, 1],
+				[400, NaN, 1],
+				[400, 0, NaN],
+			]) {
+				await metrics(300, 64, "resize");
+				await checkBounds(300, 64);
+				await metrics(height, top, "pageshow", scale);
+				await checkBounds(844, 0);
+			}
+			await metrics(844, 0, "resize");
 			await page.screenshot({
 				path: testInfo.outputPath(`restored-fullheight-${width}.png`),
 			});
@@ -6955,6 +7133,11 @@ test.describe("mobile viewport sizing", () => {
 			await page.screenshot({
 				path: testInfo.outputPath(`after-rotation-${width}.png`),
 			});
+			await expect(draft).toHaveValue("Short again");
+			await expect(
+				page.getByRole("img", { name: "Local attachment preview" }),
+			).toHaveCount(1);
+			expect(posts).toEqual([]);
 		});
 });
 
@@ -7169,10 +7352,39 @@ for (const width of [320, 390]) {
 				.evaluate((node) => getComputedStyle(node).outlineStyle),
 		).not.toBe("none");
 		await page.getByRole("button", { name: /^Open sessions:/ }).click();
-		const metadata = page.getByRole("group", {
-			name: "Model and context",
+		const metadata = page.locator(
+			".session-sidebar .session-card [aria-current=true]",
+		);
+		await expect(metadata.locator(".model-name")).toHaveText("model");
+		await expect(metadata).toHaveAccessibleDescription("model");
+		const alignment = await metadata.evaluate((node) => {
+			const card = node.closest(".session-card")!.getBoundingClientRect();
+			const model = node.querySelector(".model-name")!.getBoundingClientRect();
+			const status = node
+				.querySelector(".session-activity")!
+				.getBoundingClientRect();
+			const pencil = node
+				.closest(".session-card")!
+				.querySelector(".rename-session")!
+				.getBoundingClientRect();
+			return {
+				cardRight: card.right,
+				modelRight: model.right,
+				statusTop: status.top,
+				modelTop: model.top,
+				pencilTop: pencil.top,
+				cardTop: card.top,
+				pencilBottom: pencil.bottom,
+			};
 		});
-		await expect(metadata).toHaveText("model40%/128,000");
+		expect(alignment.modelRight).toBeCloseTo(alignment.cardRight - 10, 0);
+		expect(Math.abs(alignment.modelTop - alignment.statusTop)).toBeLessThan(2);
+		const cardBorder = await metadata
+			.locator("..")
+			.evaluate((node) => parseFloat(getComputedStyle(node).borderTopWidth));
+		expect(alignment.pencilTop).toBeCloseTo(alignment.cardTop + cardBorder, 0);
+		expect(alignment.statusTop).toBeGreaterThanOrEqual(alignment.pencilBottom);
+		await expect(page.locator(".context-usage")).toHaveCount(0);
 		await expect(page.locator(".composer .session-metadata")).toHaveCount(0);
 		await page.getByRole("button", { name: "Close sessions" }).click();
 		const active = page.locator('[data-native-item="active"]');
@@ -7182,11 +7394,7 @@ for (const width of [320, 390]) {
 		);
 		await expect(active.locator(".tool-state")).toHaveText("Done");
 		await page.getByRole("button", { name: /^Open sessions:/ }).click();
-		await expect(metadata.locator(".context-usage")).toHaveText("?%/128,000");
-		await expect(metadata.locator(".context-usage")).toHaveAttribute(
-			"aria-label",
-			"Context usage unknown, 128,000 token limit",
-		);
+		await expect(page.locator(".context-usage")).toHaveCount(0);
 		await expect(metadata.locator(".model-name")).toHaveText(
 			"long-model-name-".repeat(12),
 		);
@@ -7257,9 +7465,9 @@ for (const width of [320, 390]) {
 			expect(input.height).toBeGreaterThanOrEqual(44);
 			await page.getByRole("button", { name: /^Open sessions:/ }).click();
 			await metadata.scrollIntoViewIfNeeded();
-			const label = (await metadata.boundingBox())!;
+			const label = (await metadata.locator(".model-name").boundingBox())!;
 			const selectedName = (await page
-				.locator(".selected-session-name")
+				.locator(".session-card [aria-current=true] strong")
 				.boundingBox())!;
 			expect(label.y).toBeGreaterThanOrEqual(
 				selectedName.y + selectedName.height,
@@ -7274,10 +7482,6 @@ for (const width of [320, 390]) {
 					);
 				}),
 			).toBe(true);
-			const contextBox = (await metadata
-				.locator(".context-usage")
-				.boundingBox())!;
-			expect(contextBox.x + contextBox.width).toBeLessThanOrEqual(width);
 			await page.screenshot({
 				path: testInfo.outputPath(`metadata-in-drawer-${width}-${height}.png`),
 			});

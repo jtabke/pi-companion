@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Composer, ActionReceipt } from "./composer.js";
 import { Conversation, SafeMarkdown } from "./conversation.js";
@@ -50,12 +50,17 @@ function SessionList({
 	selected,
 	connected,
 	onChoose,
+	selectedModel,
+	renameAction,
 }: {
 	sessions: View["sessions"];
 	selected?: Identity;
 	connected: boolean;
 	onChoose: (instance: string) => void;
+	selectedModel?: string;
+	renameAction?: React.ReactNode;
 }) {
+	const pathPrefix = useId();
 	// Summaries arrive newest-first; exact cwd keys preserve directory/session recency.
 	const directories = new Map<string, View["sessions"]>();
 	for (const session of sessions) {
@@ -64,10 +69,17 @@ function SessionList({
 		if (group) group.push(session);
 		else directories.set(cwd, [session]);
 	}
+	const directoryName = (cwd: string) =>
+		cwd.split("/").filter(Boolean).pop() || cwd;
+	const nameCounts = new Map<string, number>();
+	for (const cwd of directories.keys()) {
+		const name = directoryName(cwd);
+		nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+	}
 	return (
 		<nav aria-label="Terminal sessions">
 			<p className="session-list-note muted">
-				{sessions.length} live terminals · Background unobserved
+				{sessions.length} live terminals
 			</p>
 			{[...directories].map(([cwd, group]) => (
 				<section
@@ -75,22 +87,58 @@ function SessionList({
 					key={cwd}
 					aria-label={cwd || "Working directory unavailable"}
 				>
-					{cwd ? (
-						<details className="directory-details">
-							<summary aria-label={`Working directory: ${cwd}`}>
-								<h3>{cwd.split("/").filter(Boolean).pop() || cwd}</h3>
-							</summary>
-							<p>{cwd}</p>
-						</details>
-					) : (
-						<h3>Working directory unavailable</h3>
-					)}
+					<div className="directory-heading">
+						<div className="directory-title">
+							<h3>
+								{cwd ? directoryName(cwd) : "Working directory unavailable"}
+							</h3>
+							{cwd && (nameCounts.get(directoryName(cwd)) ?? 0) > 1 && (
+								<p className="directory-parent">
+									{cwd.slice(0, cwd.lastIndexOf("/")) || "/"}
+								</p>
+							)}
+						</div>
+						{cwd && (
+							<>
+								<button
+									className="directory-path-trigger"
+									aria-label={`Full path: ${cwd}`}
+									aria-haspopup="dialog"
+									popoverTarget={`${pathPrefix}-${group[0].instance}`}
+								>
+									Full path
+								</button>
+								<div
+									id={`${pathPrefix}-${group[0].instance}`}
+									className="directory-path"
+									popover="auto"
+									role="dialog"
+									aria-label={`Working directory: ${cwd}`}
+								>
+									<div className="directory-path-heading">
+										<strong>Full path</strong>
+										<button
+											aria-label="Close full path"
+											popoverTarget={`${pathPrefix}-${group[0].instance}`}
+											popoverTargetAction="hide"
+										>
+											×
+										</button>
+									</div>
+									<p>{cwd}</p>
+								</div>
+							</>
+						)}
+					</div>
 					{group.map((session) => {
 						const activity = sessionActivity(
 							session,
 							connected,
 							session.conflict,
 						);
+						const isSelected =
+							session.instance === selected?.instance &&
+							session.generation === selected?.generation;
 						return (
 							<div
 								role="group"
@@ -100,20 +148,34 @@ function SessionList({
 							>
 								<button
 									aria-label={`${session.session} ${session.project} ${activity}`}
-									aria-current={
-										session.instance === selected?.instance &&
-										session.generation === selected?.generation
-											? "true"
+									aria-current={isSelected ? "true" : undefined}
+									aria-describedby={
+										isSelected && selectedModel
+											? `${pathPrefix}-${session.instance}-model`
 											: undefined
 									}
 									onClick={() => onChoose(session.instance)}
 								>
 									<strong>{session.session}</strong>
-									<small className="session-activity" data-activity={activity}>
-										<i className="session-dot" aria-hidden="true" />
-										{activity}
-									</small>
+									<div className="session-card-meta">
+										<small
+											className="session-activity"
+											data-activity={activity}
+										>
+											<i className="session-dot" aria-hidden="true" />
+											{activity}
+										</small>
+										{isSelected && selectedModel && (
+											<small
+												className="model-name"
+												id={`${pathPrefix}-${session.instance}-model`}
+											>
+												{selectedModel}
+											</small>
+										)}
+									</div>
 								</button>
+								{isSelected && renameAction}
 							</div>
 						);
 					})}
@@ -258,7 +320,10 @@ function App() {
 		};
 		const syncViewport = () => {
 			// The visual viewport shrinks for overlay keyboards; zoom is not a keyboard.
-			if (Math.abs(viewport.scale - 1) > 0.01) {
+			if (
+				!Number.isFinite(viewport.scale) ||
+				Math.abs(viewport.scale - 1) > 0.01
+			) {
 				restore();
 				return;
 			}
@@ -266,7 +331,10 @@ function App() {
 			// positions the visible area; it must not also reduce its reported height.
 			const top = Math.max(0, viewport.offsetTop);
 			const height = viewport.height;
-			if (height <= 0 || !Number.isFinite(height + top)) return;
+			if (height <= 0 || !Number.isFinite(height + top)) {
+				restore();
+				return;
+			}
 			root.style.setProperty("--visible-height", `${height}px`);
 			root.style.setProperty("--visible-top", `${top}px`);
 			if (
@@ -276,20 +344,37 @@ function App() {
 				root.style.setProperty("--visible-bottom-padding", "8px");
 			else root.style.removeProperty("--visible-bottom-padding");
 		};
-		syncViewport();
-		viewport.addEventListener("resize", syncViewport);
-		viewport.addEventListener("scroll", syncViewport);
-		// A restored page or layout resize can update metrics without a visual
-		// viewport event. Re-read the same native metrics, never infer a keyboard.
-		window.addEventListener("resize", syncViewport);
-		window.addEventListener("pageshow", syncViewport);
-		document.addEventListener("visibilitychange", syncViewport);
+		let frame = 0;
+		const reconcileViewport = () => {
+			cancelAnimationFrame(frame);
+			syncViewport();
+			// WebKit can publish dimensions after its event, without notifying again.
+			// Recheck over two animation frames, not a permanent timer (webkit.org/b/237851).
+			frame = requestAnimationFrame(() => {
+				syncViewport();
+				frame = requestAnimationFrame(() => {
+					frame = 0;
+					syncViewport();
+				});
+			});
+		};
+		const windowEvents = ["resize", "pageshow", "focus", "orientationchange"];
+		const documentEvents = ["visibilitychange", "focusin", "focusout"];
+		reconcileViewport();
+		viewport.addEventListener("resize", reconcileViewport);
+		viewport.addEventListener("scroll", reconcileViewport);
+		for (const event of windowEvents)
+			window.addEventListener(event, reconcileViewport);
+		for (const event of documentEvents)
+			document.addEventListener(event, reconcileViewport);
 		return () => {
-			viewport.removeEventListener("resize", syncViewport);
-			viewport.removeEventListener("scroll", syncViewport);
-			window.removeEventListener("resize", syncViewport);
-			window.removeEventListener("pageshow", syncViewport);
-			document.removeEventListener("visibilitychange", syncViewport);
+			cancelAnimationFrame(frame);
+			viewport.removeEventListener("resize", reconcileViewport);
+			viewport.removeEventListener("scroll", reconcileViewport);
+			for (const event of windowEvents)
+				window.removeEventListener(event, reconcileViewport);
+			for (const event of documentEvents)
+				document.removeEventListener(event, reconcileViewport);
 			restore();
 		};
 	}, [app]);
@@ -354,107 +439,93 @@ function App() {
 							×
 						</button>
 					</div>
-					{selected && (
-						<section
-							className="session-rename"
-							aria-label="Rename selected session"
-						>
-							<p className="selected-session-name">
-								Selected: <strong>{sessionName}</strong>
-							</p>
-							{(modelName || snapshot?.context) && (
-								<div
-									className="session-metadata"
-									role="group"
-									aria-label="Model and context"
-								>
-									{modelName && (
-										<span className="model-name" title={modelName}>
-											{modelName}
-										</span>
-									)}
-									{snapshot?.context && (
-										<span
-											className="context-usage"
-											title="Estimated native context usage / token limit"
-											aria-label={
-												snapshot.context.tokens === null
-													? `Context usage unknown, ${snapshot.context.window.toLocaleString()} token limit`
-													: undefined
-											}
-										>
-											{snapshot.context.tokens === null
-												? "?"
-												: Math.round(
-														(snapshot.context.tokens /
-															snapshot.context.window) *
-															100,
-													)}
-											%/{snapshot.context.window.toLocaleString()}
-										</span>
-									)}
-								</div>
-							)}
-							<button
-								ref={renameButton}
-								disabled={!canRename}
-								onClick={openRename}
+					{selected &&
+						(renameEditor?.editing ||
+							renameEditor?.message ||
+							!reachable ||
+							selectedSummary?.rename !== true) && (
+							<section
+								className="session-rename"
+								aria-label="Rename selected session"
 							>
-								Rename session
-							</button>
-							{!reachable ? (
-								<p>Disconnected — rename unavailable.</p>
-							) : selectedSummary?.rename !== true ? (
-								<p>
-									Rename unavailable — fully restart the owning Pi to load the
-									updated bridge.
-								</p>
-							) : null}
-							{renameEditor?.editing && (
-								<form
-									onSubmit={(event) => {
-										event.preventDefault();
-										void saveRename();
-									}}
-								>
-									<label htmlFor="session-name">Session name</label>
-									<input
-										id="session-name"
-										autoFocus
-										value={renameEditor.name}
-										disabled={operating || renameLocked}
-										onChange={(event) => editRename(event.target.value)}
-										aria-describedby="rename-guidance"
-									/>
-									<p id="rename-guidance">
-										Nonblank, at most 120 characters. Save changes native
-										metadata only.
+								{!reachable ? (
+									<p>Disconnected — rename unavailable.</p>
+								) : selectedSummary?.rename !== true ? (
+									<p>
+										Rename unavailable — fully restart the owning Pi to load the
+										updated bridge.
 									</p>
-									<div className="control-actions">
-										<button
-											type="submit"
-											disabled={
-												!canSaveRename ||
-												!renameEditor.name.trim() ||
-												renameEditor.name.length > 120
-											}
-										>
-											Save
-										</button>
-										<button type="button" onClick={dismissRename}>
-											Cancel
-										</button>
-									</div>
-								</form>
-							)}
-							{renameEditor?.message && (
-								<p role="status">{renameEditor.message}</p>
-							)}
-						</section>
-					)}
+								) : null}
+								{renameEditor?.editing && (
+									<form
+										onSubmit={(event) => {
+											event.preventDefault();
+											void saveRename();
+										}}
+									>
+										<label htmlFor="session-name">Session name</label>
+										<input
+											id="session-name"
+											autoFocus
+											value={renameEditor.name}
+											disabled={operating || renameLocked}
+											onChange={(event) => editRename(event.target.value)}
+											aria-describedby="rename-guidance"
+										/>
+										<p id="rename-guidance">
+											Nonblank, at most 120 characters. Save changes native
+											metadata only.
+										</p>
+										<div className="control-actions">
+											<button
+												type="submit"
+												disabled={
+													!canSaveRename ||
+													!renameEditor.name.trim() ||
+													renameEditor.name.length > 120
+												}
+											>
+												Save
+											</button>
+											<button type="button" onClick={dismissRename}>
+												Cancel
+											</button>
+										</div>
+									</form>
+								)}
+								{renameEditor?.message && (
+									<p role="status">{renameEditor.message}</p>
+								)}
+							</section>
+						)}
 					<SessionList
 						sessions={view.sessions}
 						selected={selected}
+						selectedModel={modelName}
+						renameAction={
+							<button
+								className="rename-session"
+								ref={renameButton}
+								aria-label="Rename session"
+								title="Rename session"
+								disabled={!canRename}
+								onClick={openRename}
+							>
+								<svg
+									aria-hidden="true"
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="1.5"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+								>
+									<path d="m4 16 12-12 4 4L8 20H4z M13 7l4 4" />
+								</svg>
+							</button>
+						}
 						connected={
 							transport === "Connected" && view.connection !== "unavailable"
 						}
@@ -463,94 +534,81 @@ function App() {
 							closeSessions();
 						}}
 					/>
-					{selected && (
-						<button
-							onClick={() => {
-								choose("");
-								closeSessions();
-							}}
-						>
-							Leave session
-						</button>
-					)}
-					{selected && (
-						<section className="input-details" aria-label="Input details">
-							<h3>Input details</h3>
-							<p>{composerAvailability}</p>
-							<p>Up to four still PNG, JPEG or WebP images · 4 MB total</p>
-							{inputNotice?.routine && (
-								<p role="status">{inputNotice.message}</p>
-							)}
-							{inputReceipt?.routine && !inputReceipt.deliverAs && (
-								<ActionReceipt {...inputReceipt} />
-							)}
-							{stopReceipt?.routine && <ActionReceipt {...stopReceipt} />}
-						</section>
-					)}
-					{(held || (selected && view.controller?.held && !held)) && (
-						<section className="controls" aria-label="Browser control">
-							<h3>Browser controls</h3>
-							{held && (
-								<div className="control-actions">
+					<footer className="drawer-footer">
+						{selected && (
+							<button
+								className="leave-session"
+								onClick={() => {
+									choose("");
+									closeSessions();
+								}}
+							>
+								Leave session
+							</button>
+						)}
+						{(held || (selected && view.controller?.held && !held)) && (
+							<section className="controls" aria-label="Browser control">
+								<p className="control-summary">
+									{held ? "Control held here" : "Another browser has control"}
+								</p>
+								{held && (
+									<div className="control-actions">
+										<button
+											disabled={!reachable || operating}
+											onClick={() => void controlAction("renew")}
+											aria-label="Renew control (60s)"
+										>
+											Renew
+										</button>
+										<button
+											disabled={operating}
+											onClick={() => void controlAction("release")}
+											aria-label="Release control"
+										>
+											Release
+										</button>
+									</div>
+								)}
+								{selected && view.controller?.held && !held && (
 									<button
 										disabled={!reachable || operating}
-										onClick={() => void controlAction("renew")}
-										aria-label="Renew control (60s)"
+										aria-label="Take over browser control"
+										onClick={() => void controlAction("takeover")}
 									>
-										Renew (60s)
+										Take over control
 									</button>
-									<button
-										disabled={operating}
-										onClick={() => void controlAction("release")}
-										aria-label="Release control"
-									>
-										Release
-									</button>
-								</div>
-							)}
-							{selected && view.controller?.held && !held && (
-								<button
-									disabled={!reachable || operating}
-									aria-label="Take over browser control"
-									onClick={() => void controlAction("takeover")}
-								>
-									Take over control
-								</button>
+								)}
+							</section>
+						)}
+						<section className="device-management" aria-label="Device access">
+							<h3>Device access</h3>
+							<button disabled={operating} onClick={() => void forget()}>
+								Forget this device
+							</button>
+							<details className="install-help" hidden={standalone}>
+								<summary>Install on this device</summary>
+								<p>
+									On iPhone, open this address in Safari, tap Share, then Add to
+									Home Screen.
+								</p>
+								<p>
+									In other supported browsers, use the browser menu’s Install
+									app or Add to Home Screen option.
+								</p>
+								<p>
+									Open the app once online before using the offline notice.
+									Installation does not grant device access or browser control;
+									the gateway and private network are still required.
+								</p>
+							</details>
+							{forgetStatus && <p role="status">{forgetStatus}</p>}
+							{offlineSetupNotice && (
+								<p className="muted" role="status">
+									{offlineSetupNotice}
+								</p>
 							)}
 						</section>
-					)}
-					<section className="device-management" aria-label="Device access">
-						<h3>Device access</h3>
-						<button disabled={operating} onClick={() => void forget()}>
-							Forget this device
-						</button>
-						{forgetStatus && <p role="status">{forgetStatus}</p>}
-						{offlineSetupNotice && (
-							<p className="muted" role="status">
-								{offlineSetupNotice}
-							</p>
-						)}
-						<details className="install-help" hidden={standalone}>
-							<summary>Install on this device</summary>
-							<p>
-								On iPhone, open this address in Safari, tap Share, then Add to
-								Home Screen.
-							</p>
-							<p>
-								In other supported browsers, use the browser menu’s Install app
-								or Add to Home Screen option.
-							</p>
-							<p>
-								Open the app once online before using the offline notice.
-								Installation does not grant device access or browser control;
-								the gateway and private network are still required.
-							</p>
-						</details>
-					</section>
-					<p className="sidebar-note">
-						Selecting a session does not send input or take browser control.
-						Background work remains unobserved.
-					</p>
+					</footer>
 				</dialog>
 			)}
 			<header className="chat-header">

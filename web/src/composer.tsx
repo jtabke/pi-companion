@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import type { Identity, View, TextRequest } from "../../src/shared/protocol.js";
 import type { useBrowserSession } from "./use-browser-session.js";
 
@@ -129,49 +129,15 @@ export function Composer({
 		| undefined
 	>(undefined);
 
-	const sendOptions = useRef<HTMLDialogElement>(null);
-	const sendButton = useRef<HTMLButtonElement>(null);
-	const followUpButton = useRef<HTMLButtonElement>(null);
-	const sendHold = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-	const sendPointer = useRef<{ id: number; x: number; y: number } | undefined>(
-		undefined,
-	);
-	// Allow small finger jitter, but cancel a deliberate drag within the 44px target.
-	const sendTapSlop = 12;
-	const suppressSendClick = useRef(false);
-	const busyOptions =
-		!inputIdle && canBusyText && !attachment && !outstanding && !!draft.trim();
+	const [busyMode, setBusyMode] = useState<"steer" | "followUp">("steer");
+	const showBusyMode = !inputIdle && canBusyText;
 	const sendEnabled =
 		(inputIdle ? canSend : canBusyText && !attachment) &&
 		!outstanding &&
 		(!!draft.trim() || !!attachment);
-	function clearSendHold() {
-		clearTimeout(sendHold.current);
-		sendHold.current = undefined;
-	}
-	function openSendOptions() {
-		if (!busyOptions || !sendOptions.current) return;
-		if (!sendOptions.current.open) sendOptions.current.show();
-		followUpButton.current?.focus({ preventScroll: true });
-	}
-	function closeSendOptions(restoreEditorFocus: boolean) {
-		const dialog = sendOptions.current;
-		// A nonmodal dialog otherwise restores its prior editor focus on close.
-		// Move focus outside first so a pointer choice cannot reopen the keyboard.
-		if (dialog?.open && dialog.contains(document.activeElement))
-			sendButton.current?.focus({ preventScroll: true });
-		dialog?.close();
-		// Pointer submission must not reopen a dismissed software keyboard.
-		if (restoreEditorFocus) draftInput.current?.focus({ preventScroll: true });
-	}
-	useEffect(() => {
-		return () => {
-			clearSendHold();
-			sendPointer.current = undefined;
-			suppressSendClick.current = true;
-			closeSendOptions(false);
-		};
-	}, [selectedKey, busyOptions, paired]);
+	useLayoutEffect(() => {
+		setBusyMode("steer");
+	}, [selectedKey, inputIdle]);
 	const [closedSlash, setClosedSlash] = useState("");
 	const [slashChoice, setSlashChoice] = useState({ key: "", index: 0 });
 	const slashKey = `${selectedKey}:${draft}`;
@@ -253,8 +219,8 @@ export function Composer({
 				<section className="composer" aria-label="Browser text input">
 					<div className="composer-notices">
 						<p id="send-choice-guidance" className="visually-hidden">
-							Tap to steer. Hold for Follow-up, or press Arrow Down on Send to
-							open the choice. Alt+Enter in the editor requests Follow-up.
+							Choose Steer or Follow-up beside the image picker, then Send.
+							Alt+Enter in the editor requests Follow-up directly.
 						</p>
 						{!!observedQuestions && (
 							<div className="needs-answer">
@@ -399,7 +365,11 @@ export function Composer({
 							</button>
 						)}
 					</div>
-					<div className="composer-bar" data-draft={draft.length > 0}>
+					<div
+						className="composer-bar"
+						data-draft={draft.length > 0}
+						data-busy={showBusyMode}
+					>
 						<div className="attachment-picker">
 							<label htmlFor="attachment">
 								<span aria-hidden="true">+</span>
@@ -419,6 +389,22 @@ export function Composer({
 								}}
 							/>
 						</div>
+						{showBusyMode && (
+							<select
+								className="busy-mode"
+								aria-label="Busy delivery mode"
+								value={busyMode}
+								disabled={operating || !!outstanding || !!attachment}
+								onChange={(event) =>
+									setBusyMode(
+										event.target.value === "followUp" ? "followUp" : "steer",
+									)
+								}
+							>
+								<option value="steer">Steer</option>
+								<option value="followUp">Follow-up</option>
+							</select>
+						)}
 						<label className="visually-hidden" htmlFor="draft">
 							Text for selected Pi (local draft)
 						</label>
@@ -527,11 +513,17 @@ export function Composer({
 										!event.shiftKey &&
 										!event.ctrlKey &&
 										!event.metaKey &&
-										(!event.altKey || busyOptions)
+										(!event.altKey || showBusyMode)
 									) {
 										event.preventDefault();
-										closeSendOptions(true);
-										void sendText(false, event.altKey ? "followUp" : undefined);
+										void sendText(
+											false,
+											inputIdle
+												? undefined
+												: event.altKey
+													? "followUp"
+													: busyMode,
+										);
 									}
 									return;
 								}
@@ -573,36 +565,6 @@ export function Composer({
 								pickImage(images);
 							}}
 						/>
-						{busyOptions && (
-							<dialog
-								ref={sendOptions}
-								id="send-options"
-								aria-label="Send options"
-								className="send-options"
-								onKeyDown={(event) => {
-									if (event.key === "Escape") {
-										event.preventDefault();
-										closeSendOptions(false);
-										sendButton.current?.focus({ preventScroll: true });
-									}
-								}}
-							>
-								<div
-									className="busy-text-controls"
-									aria-label="Busy text requests"
-								>
-									<button
-										ref={followUpButton}
-										onClick={(event) => {
-											closeSendOptions(event.detail === 0);
-											void sendText(false, "followUp");
-										}}
-									>
-										Follow-up
-									</button>
-								</div>
-							</dialog>
-						)}
 						<button
 							className="stop-button"
 							aria-label="Stop"
@@ -621,102 +583,38 @@ export function Composer({
 							</svg>
 						</button>
 						<button
-							ref={sendButton}
 							className="send-button"
-							aria-label={inputIdle ? "Send" : "Steer"}
-							aria-haspopup={busyOptions ? "dialog" : undefined}
-							aria-controls={busyOptions ? "send-options" : undefined}
-							aria-describedby={
-								busyOptions ? "send-choice-guidance" : undefined
+							aria-label={
+								inputIdle
+									? "Send"
+									: busyMode === "steer"
+										? "Steer"
+										: "Send Follow-up"
 							}
-							onKeyDown={(event) => {
-								if (busyOptions && event.key === "ArrowDown") {
-									event.preventDefault();
-									openSendOptions();
-								}
-							}}
-							onContextMenu={(event) => {
-								if (busyOptions) {
-									event.preventDefault();
-									openSendOptions();
-								}
-							}}
-							title={inputIdle ? "Send" : "Steer the current run"}
+							aria-describedby={
+								showBusyMode ? "send-choice-guidance" : undefined
+							}
+							title={
+								inputIdle
+									? "Send"
+									: busyMode === "steer"
+										? "Steer the current run"
+										: "Request Follow-up after the run"
+							}
 							disabled={!sendEnabled}
-							onPointerDown={(event) => {
-								if (!event.isPrimary) {
-									if (sendPointer.current) {
-										clearSendHold();
-										suppressSendClick.current = true;
-									}
-									return;
-								}
-								if (event.button !== 0) return;
-								clearSendHold();
-								suppressSendClick.current = false;
-								sendPointer.current = {
-									id: event.pointerId,
-									x: event.clientX,
-									y: event.clientY,
-								};
-								event.currentTarget.setPointerCapture(event.pointerId);
-								if (!busyOptions) return;
-								sendHold.current = setTimeout(() => {
-									sendHold.current = undefined;
-									suppressSendClick.current = true;
-									openSendOptions();
-								}, 500);
-							}}
-							onPointerMove={(event) => {
-								const press = sendPointer.current;
-								if (press?.id !== event.pointerId) return;
-								const box = event.currentTarget.getBoundingClientRect();
+							onMouseDown={(event) => {
+								// iOS may move focus despite a canceled pointerdown; cancel the
+								// compatibility mouse focus instead (webkit.org/b/316402).
+								// Native click still owns dispatch and cancels a scrolling tap.
 								if (
-									Math.hypot(event.clientX - press.x, event.clientY - press.y) >
-										sendTapSlop ||
-									event.clientX < box.left ||
-									event.clientX > box.right ||
-									event.clientY < box.top ||
-									event.clientY > box.bottom
-								) {
-									clearSendHold();
-									suppressSendClick.current = true;
-								}
-							}}
-							onPointerUp={(event) => {
-								if (sendPointer.current?.id !== event.pointerId) return;
-								clearSendHold();
-								const box = event.currentTarget.getBoundingClientRect();
-								if (
-									event.clientX < box.left ||
-									event.clientX > box.right ||
-									event.clientY < box.top ||
-									event.clientY > box.bottom
+									event.button === 0 &&
+									document.activeElement === draftInput.current
 								)
-									suppressSendClick.current = true;
-								sendPointer.current = undefined;
+									event.preventDefault();
 							}}
-							onPointerCancel={() => {
-								clearSendHold();
-								sendPointer.current = undefined;
-								suppressSendClick.current = true;
-							}}
-							onLostPointerCapture={() => {
-								clearSendHold();
-								if (sendPointer.current !== undefined)
-									suppressSendClick.current = true;
-								sendPointer.current = undefined;
-							}}
-							onClick={(event) => {
-								if (event.detail !== 0 && suppressSendClick.current) {
-									suppressSendClick.current = false;
-									// Native touch's compatibility click can focus Send after the hold.
-									if (sendOptions.current?.open)
-										followUpButton.current?.focus({ preventScroll: true });
-									return;
-								}
-								closeSendOptions(event.detail === 0);
-								void sendText();
+							onClick={() => {
+								void sendText(false, inputIdle ? undefined : busyMode);
+								draftInput.current?.blur();
 							}}
 						>
 							<svg

@@ -105,8 +105,8 @@ function CopyText({ text, kind }: { text: string; kind: "code" | "answer" }) {
 				{kind === "answer" ? (
 					<svg
 						aria-hidden="true"
-						width="18"
-						height="18"
+						width="16"
+						height="16"
 						viewBox="0 0 24 24"
 						fill="none"
 						stroke="currentColor"

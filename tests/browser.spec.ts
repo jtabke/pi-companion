@@ -83,22 +83,6 @@ async function expectBusyReceipt(page: Page, message: string, text: string) {
 	await expect(page.locator(".composer .receipt-preview")).toHaveCount(0);
 }
 
-// Routine diagnostics are inspected deliberately, not asserted via hidden text.
-async function expectInputDetails(page: Page, message: string | RegExp) {
-	await page.getByRole("button", { name: /^Open sessions:/ }).click();
-	const sidebar = page.getByRole("dialog", { name: "Live sessions" });
-	await expect(
-		sidebar
-			.getByRole("region", { name: "Input details" })
-			.getByText(message, { exact: true }),
-	).toBeVisible();
-	await sidebar.getByRole("button", { name: "Close sessions" }).click();
-	await expect(sidebar).toBeHidden();
-	await expect(
-		page.getByRole("button", { name: /^Open sessions:/ }),
-	).toBeFocused();
-}
-
 test("C4 Stop ignored abort stays Stopping; immutable explicit retry survives switching and restart without touching input drafts", async ({
 	page,
 	context,
@@ -130,7 +114,7 @@ test("C4 Stop ignored abort stays Stopping; immutable explicit retry survives sw
 	await expect(
 		page.getByLabel("Text for selected Pi (local draft)"),
 	).toHaveAccessibleDescription(
-		"Pi is busy — Send steers; hold Send or use Alt+Enter for Follow-up. Completion unconfirmed.",
+		"Pi is busy — choose Steer or Follow-up beside +, then Send. Alt+Enter requests Follow-up. Completion unconfirmed.",
 	);
 	await expect(
 		page.getByRole("button", {
@@ -232,7 +216,7 @@ test("C4 Stop ignored abort stays Stopping; immutable explicit retry survives sw
 			.aborts,
 	).toBe(before + 1);
 	await page.getByRole("button", { name: "Retry same Stop request" }).click();
-	await expectInputDetails(page, /Stop: Forwarded; completion unconfirmed/);
+
 	expect(bodies).toHaveLength(2);
 	expect(bodies[1].requestId).toBe(bodies[0].requestId);
 	expect(bodies[1].instance).toBe(identity.instance);
@@ -424,7 +408,7 @@ test("C4 Stop preserves an uncertain original image input independently of Stop 
 	await page
 		.getByRole("button", { name: "Stop", exact: true, includeHidden: true })
 		.click();
-	await expectInputDetails(page, /Stop: Forwarded; completion unconfirmed/);
+
 	await expect(
 		page.getByRole("button", { name: "Retry same outstanding input" }),
 	).toBeDisabled();
@@ -441,7 +425,7 @@ test("C4 Stop preserves an uncertain original image input independently of Stop 
 	await page
 		.getByRole("button", { name: "Retry same outstanding input" })
 		.click();
-	await expectInputDetails(page, "Forwarded; completion unconfirmed");
+
 	expect(images).toHaveLength(2);
 	expect(images[1]).toEqual(images[0]);
 	await expect(
@@ -745,7 +729,7 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 	await page
 		.getByRole("button", { name: "Retry same outstanding input" })
 		.click();
-	await expectInputDetails(page, /Forwarded; completion unconfirmed/);
+
 	expect(sent).toHaveLength(2);
 	expect(sent[1].requestId).toBe(sent[0].requestId);
 	expect(sent[1].text).toBe(sent[0].text);
@@ -805,14 +789,6 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 	await chooseSession(page, a);
 	await page.getByRole("button", { name: /^Open sessions:/ }).click();
 	const sidebar = page.getByRole("dialog", { name: "Live sessions" });
-	const receipt = sidebar
-		.getByRole("region", { name: "Input details" })
-		.locator(".action-receipt")
-		.filter({ hasText: "Forwarded; completion unconfirmed" });
-	await expect(receipt).toBeVisible();
-	await expect(receipt.locator("details p")).toBeHidden();
-	await receipt.getByText("Details", { exact: true }).click();
-	await expect(receipt.locator("details p")).toContainText(`Instance ${a}`);
 	await sidebar.getByRole("button", { name: "Close sessions" }).click();
 	await expect(draft).toHaveValue("");
 	await tab.close();
@@ -1176,7 +1152,7 @@ for (const width of [320, 390])
 		await page
 			.getByRole("button", { name: "Retry same outstanding input" })
 			.click();
-		await expectInputDetails(page, /Forwarded; completion unconfirmed/);
+
 		expect(sent).toHaveLength(2);
 		expect(sent[1].requestId).toBe(sent[0].requestId);
 		expect(sent[1].images).toEqual(sent[0].images);
@@ -2048,7 +2024,7 @@ for (const width of [320, 390])
 				includeHidden: true,
 			})
 			.click();
-		await expectInputDetails(page, /Forwarded; completion unconfirmed/);
+
 		await expect(
 			page.getByLabel("Text for selected Pi (local draft)"),
 		).toHaveValue("");
@@ -2319,7 +2295,7 @@ test.describe("I3 slash composer", () => {
 				await page
 					.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
 					.click();
-			await expectInputDetails(page, "Forwarded; completion unconfirmed");
+
 			await expect(draft).toHaveValue("");
 			expect(
 				(await (await context.request.get("/api/fixture/dispatches")).json())
@@ -2415,11 +2391,8 @@ test.describe("I3 slash composer", () => {
 		await draft.press("Enter");
 		await draft.press("Alt+Enter");
 		await draft.fill("normal busy authored");
-		await page
-			.getByRole("button", { name: "Steer", exact: true })
-			.press("ArrowDown");
 		await expect(
-			page.getByRole("button", { name: "Follow-up", exact: true }),
+			page.getByRole("combobox", { name: "Busy delivery mode" }),
 		).toBeEnabled();
 		await state("idle");
 		await chooseSession(page, other.instance);
@@ -2506,426 +2479,254 @@ test.describe("I3 slash composer", () => {
 	});
 });
 
-test("I2 busy text repeated requests, local attachment guard and accessible mobile controls", async ({
-	page,
-	context,
-}, testInfo) => {
-	await pairQuestionnaire(page, context);
-	const cdp =
-		testInfo.project.name === "chromium"
-			? await context.newCDPSession(page)
-			: undefined;
-	const touch = async (
-		type: "touchStart" | "touchMove" | "touchEnd",
-		x = 0,
-		y = 0,
-	) => {
-		await cdp!.send("Input.dispatchTouchEvent", {
-			type,
-			touchPoints: type === "touchEnd" ? [] : [{ x, y, id: 1 }],
-		});
-	};
-	const state = (action: string) =>
-		context.request.post("/api/fixture/stop-state", { data: { action } });
-	await state("reset");
-	await state("work");
-	const list = await (await context.request.get("/api/snapshot")).json();
-	const owner = list.sessions.find(
-		(s: { session: string }) => s.session === "Browser test",
-	);
-	await chooseSession(page, owner.instance);
-	await expect(page.locator(".busy-delivery-hint")).toHaveCount(0);
-	const before = (
-		await (await context.request.get("/api/fixture/dispatches")).json()
-	).dispatches;
-	const requests: Record<string, string>[] = [];
-	const mutations: string[] = [];
-	page.on("request", (req) => {
-		// Selection/disconnect may release held control; they must never claim or send.
-		if (
-			/\/api\/(control|text|image)$/.test(req.url()) &&
-			!(
-				req.url().endsWith("/api/control") &&
-				req.postDataJSON().action === "release"
-			)
-		)
-			mutations.push(req.url());
-		if (/\/api\/(text|image)$/.test(req.url()))
-			requests.push(req.postDataJSON());
-	});
-	const draft = page.getByLabel("Text for selected Pi (local draft)");
-	for (const width of [320, 390]) {
-		await page.setViewportSize({ width, height: 844 });
-		await draft.fill("image stays local");
-		await page
-			.getByLabel("Images for selected Pi (local picker)")
-			.setInputFiles({ name: "busy.png", mimeType: "image/png", buffer: png });
-		await expect(
-			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
-		).toBeDisabled();
-		await expect(
-			page.getByRole("button", { name: "Follow-up", exact: true }),
-		).toHaveCount(0);
-		await expect(draft).toHaveAccessibleDescription(/images stay local/);
-		await expect(page.locator("#composer-availability")).toHaveClass(
-			"visually-hidden",
+test.describe("I2 native touch input", () => {
+	test.use({ hasTouch: true });
+	test("I2 busy text repeated requests, local attachment guard and accessible mobile controls", async ({
+		page,
+		context,
+	}) => {
+		await pairQuestionnaire(page, context);
+		const state = (action: string) =>
+			context.request.post("/api/fixture/stop-state", { data: { action } });
+		await state("reset");
+		await state("work");
+		const list = await (await context.request.get("/api/snapshot")).json();
+		const owner = list.sessions.find(
+			(s: { session: string }) => s.session === "Browser test",
 		);
-		expect(
-			(await page.locator("#composer-availability").boundingBox())!.height,
-		).toBeLessThanOrEqual(1);
-		await draft.press("Enter");
-		await draft.press("Alt+Enter");
-		await page.getByRole("button", { name: /^Remove image/ }).click();
-		const send = page.getByRole("button", {
-			name: /^(Send|Steer)$/,
-			exact: true,
+		const other = list.sessions.find(
+			(s: { session: string }) => s.session === "Browser other",
+		);
+		await chooseSession(page, owner.instance);
+		const before = (
+			await (await context.request.get("/api/fixture/dispatches")).json()
+		).dispatches;
+		const requests: Record<string, string>[] = [];
+		const mutations: string[] = [];
+		page.on("request", (req) => {
+			if (
+				/\/api\/(control|text|image)$/.test(req.url()) &&
+				!(
+					req.url().endsWith("/api/control") &&
+					req.postDataJSON().action === "release"
+				)
+			)
+				mutations.push(req.url());
+			if (/\/api\/(text|image)$/.test(req.url()))
+				requests.push(req.postDataJSON());
 		});
-		await expect(send.locator("svg")).toBeVisible();
-		await expect(send).toHaveText("");
-		await expect(
-			page.getByLabel("More send options", { exact: true }),
-		).toHaveCount(0);
-		const menu = page.locator(".send-options");
-		const followUp = page.getByRole("button", {
-			name: "Follow-up",
-			exact: true,
-		});
-		await draft.fill(`cancel-safe ${width}`);
-		const mutationCount = mutations.length;
-		// Displacement cancels within the target and stays canceled after reentry.
-		for (const cancel of [
-			"move",
-			"inside-reentry",
-			"pointercancel",
-			"lostpointercapture",
-			"multitouch",
-		]) {
-			const box = (await send.boundingBox())!;
-			await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-			await page.mouse.down();
-			if (cancel === "move") await page.mouse.move(box.x - 20, box.y);
-			else if (cancel === "inside-reentry") {
-				await page.mouse.move(
-					box.x + box.width / 2 + 10,
-					box.y + box.height / 2 + 10,
-				);
-				await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-			} else if (cancel === "multitouch")
-				await send.dispatchEvent("pointerdown", {
-					pointerId: 99,
-					pointerType: "touch",
-					isPrimary: false,
-					button: 0,
-				});
-			else await send.dispatchEvent(cancel);
-			await page.waitForTimeout(550); // Exercise the canceled 500ms timer, not an async fixture wait.
-			await page.mouse.up();
-			await expect(menu).not.toHaveAttribute("open");
-			expect(mutations).toHaveLength(mutationCount);
-		}
-		if (width === 390) {
-			if (cdp) {
-				await send.evaluate((node) => {
-					for (const type of [
-						"pointerdown",
-						"pointermove",
-						"pointercancel",
-						"pointerup",
-						"click",
-					])
-						node.addEventListener(type, (event) => {
-							const pointer = event as PointerEvent;
-							const trace = JSON.parse(
-								node.getAttribute("data-native-trace") ?? "[]",
-							);
-							trace.push({
-								type,
-								x: pointer.clientX,
-								y: pointer.clientY,
-								pointerType: pointer.pointerType,
-							});
-							node.setAttribute("data-native-trace", JSON.stringify(trace));
-						});
-				});
-				const box = (await send.boundingBox())!;
-				const x = box.x + box.width / 2;
-				const y = box.y + box.height / 2;
-				await touch("touchStart", x, y);
-				await touch("touchMove", x + 10, y + 10); // 14px displacement, still inside 44px Send.
-				await touch("touchMove", x, y); // Returning cannot revive a canceled press.
-				await page.waitForTimeout(550);
-				await touch("touchEnd");
-				await expect(menu).not.toHaveAttribute("open");
-				expect(mutations).toHaveLength(mutationCount);
-				await testInfo.attach("native-in-button-drag", {
-					body: (await send.getAttribute("data-native-trace"))!,
-					contentType: "application/json",
-				});
-			}
-			for (const change of ["session", "disconnect", "idle"]) {
-				const box = (await send.boundingBox())!;
-				await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-				await page.mouse.down();
-				if (change === "session") {
-					await page.getByRole("button", { name: /^Open sessions:/ }).focus();
-					await page.keyboard.press("Enter");
-					const sidebar = page.getByRole("dialog", { name: "Live sessions" });
-					await sidebar.getByRole("button", { name: /^Browser other/ }).focus();
-					await page.keyboard.press("Enter");
-					await expect(sidebar).toBeHidden();
-				} else if (change === "disconnect") {
-					await context.request.post("/api/fixture/break-transport");
-					await expect(draft).toHaveAccessibleDescription(/Disconnected/);
-				} else {
-					await state("no-pending");
-					await state("settled");
-					await expect(menu).toHaveCount(0);
-				}
-				await page.waitForTimeout(550); // The original hold must be invalidated, not delayed to a new owner.
-				await page.mouse.up();
-				await expect(
-					page.getByRole("button", { name: "Follow-up", exact: true }),
-				).toHaveCount(0);
-				expect(mutations).toHaveLength(mutationCount);
-				if (change === "session") await chooseSession(page, owner.instance);
-				if (change === "idle") {
-					await state("pending");
-					await state("work");
-				}
-				await expect(draft).toHaveAccessibleDescription(
-					/Pi is busy — Send steers/,
-				);
-				await expect(draft).toHaveValue(`cancel-safe ${width}`);
-			}
-		}
-		await draft.dispatchEvent("keydown", { key: "Enter", isComposing: true });
-		await draft.dispatchEvent("keydown", { key: "Enter", repeat: true });
-		await draft.press("Shift+Enter");
-		await expect(draft).toHaveValue(`cancel-safe ${width}\n`);
-		expect(mutations).toHaveLength(mutationCount);
-		for (const [action, mode] of [
-			["default", "steer"],
-			["choice", "followUp"],
-			["next-tap", "steer"],
-			["alt-enter", "followUp"],
-		]) {
-			const text =
-				action === "default"
-					? "A long browser request.\n".repeat(20).trim()
-					: `${action} ${width}`;
-			await draft.fill(text);
+		const draft = page.getByLabel("Text for selected Pi (local draft)");
+		const send = page.locator(".send-button");
+		const mode = page.getByRole("combobox", { name: "Busy delivery mode" });
+		for (const width of [320, 390]) {
+			await page.setViewportSize({ width, height: 844 });
+			await expect(mode).toHaveValue("steer");
+			await expect(page.locator(".send-options")).toHaveCount(0);
+			await expect(send.locator("svg")).toBeVisible();
+			await expect(send).toHaveText("");
+			await draft.fill("image stays local");
 			const count = mutations.length;
-			if (action === "choice") {
-				if (width === 320) {
-					await send.focus();
-					await page.keyboard.press("ArrowDown");
-					await expect(menu).toHaveAttribute("open", "");
-					await page.keyboard.press("Escape");
-					await expect(menu).not.toHaveAttribute("open");
-					await expect(send).toBeFocused();
-					await page.keyboard.press("ArrowDown");
-				} else {
-					const box = (await send.boundingBox())!;
-					if (cdp)
-						await touch(
-							"touchStart",
-							box.x + box.width / 2,
-							box.y + box.height / 2,
-						);
-					else {
-						await page.mouse.move(
-							box.x + box.width / 2,
-							box.y + box.height / 2,
-						);
-						await page.mouse.down();
-					}
-					await expect(menu).toHaveAttribute("open", "");
-					if (cdp) await touch("touchEnd");
-					else await page.mouse.up(); // Hold release is not a normal Send.
-				}
-				await expect(followUp).toBeFocused();
-				expect(mutations).toHaveLength(count);
-				await expect(draft).toHaveValue(text);
-				for (const colorScheme of ["light", "dark"] as const) {
-					await page.emulateMedia({ colorScheme });
-					for (const enlarged of [false, true]) {
-						await page.evaluate((enlarged) => {
-							document.documentElement.style.fontSize = enlarged ? "125%" : "";
-						}, enlarged);
-						for (const control of [followUp, send]) {
-							const box = (await control.boundingBox())!;
-							expect(box.height).toBeGreaterThanOrEqual(44);
-							expect(box.width).toBeGreaterThanOrEqual(44);
-							expect(box.x).toBeGreaterThanOrEqual(0);
-							expect(box.x + box.width).toBeLessThanOrEqual(width);
-						}
-						expect(
-							await followUp.evaluate(
-								(node) => node.scrollWidth <= node.clientWidth,
-							),
-						).toBe(true);
-						expect(
-							await page.evaluate(
-								() => document.documentElement.scrollWidth <= innerWidth,
-							),
-						).toBe(true);
-						await page.screenshot({
-							path: testInfo.outputPath(
-								`send-options-${width}-${colorScheme}-${enlarged ? "enlarged" : "ordinary"}.png`,
-							),
-						});
-					}
-				}
-				await page.evaluate(() => {
-					document.documentElement.style.fontSize = "";
+			await page
+				.getByLabel("Images for selected Pi (local picker)")
+				.setInputFiles({
+					name: "busy.png",
+					mimeType: "image/png",
+					buffer: png,
 				});
-				if (width === 320) await page.keyboard.press("Enter");
-				else {
-					// Observe transient focus too: a forwarded receipt blurs the editor again.
+			await expect(send).toBeDisabled();
+			await expect(mode).toBeDisabled();
+			await expect(draft).toHaveAccessibleDescription(/images stay local/);
+			await expect(page.locator("#composer-availability")).toHaveClass(
+				"visually-hidden",
+			);
+			await draft.press("Enter");
+			await draft.press("Alt+Enter");
+			expect(mutations).toHaveLength(count);
+			await page.getByRole("button", { name: /^Remove image/ }).click();
+			await mode.selectOption("followUp");
+			await expect(send).toHaveAccessibleName("Send Follow-up");
+			const followUpWidth = (await mode.boundingBox())!.width;
+			expect(mutations).toHaveLength(count);
+			await draft.dispatchEvent("keydown", { key: "Enter", isComposing: true });
+			await draft.dispatchEvent("keydown", { key: "Enter", repeat: true });
+			await draft.press("Shift+Enter");
+			await expect(draft).toHaveValue("image stays local\n");
+			expect(mutations).toHaveLength(count);
+			await mode.selectOption("steer");
+			const steerBox = (await mode.boundingBox())!;
+			expect(steerBox.width).toBeGreaterThanOrEqual(44);
+			expect(steerBox.height).toBeGreaterThanOrEqual(44);
+			expect(followUpWidth - steerBox.width).toBeGreaterThan(10);
+			for (const [action, delivery] of [
+				["default", "steer"],
+				["selected-enter", "followUp"],
+				["selected-tap", "followUp"],
+				["alt-enter", "followUp"],
+			] as const) {
+				const text =
+					action === "default"
+						? "A long browser request.\n".repeat(20).trim()
+						: `${action} ${width}`;
+				await draft.fill(text);
+				const count = mutations.length;
+				if (action === "selected-enter") {
+					await mode.focus();
+					await mode.press("f"); // Native select type-ahead works in both engines.
+					await mode.press("Enter");
+					await expect(mode).toHaveValue("followUp");
+					await expect(mode).toBeFocused();
+				}
+				if (action === "alt-enter") await mode.selectOption("steer");
+				expect(mutations).toHaveLength(count);
+				if (action === "selected-enter") await draft.press("Enter");
+				else if (action === "alt-enter") await draft.press("Alt+Enter");
+				else if (action === "default" && width === 320) {
+					// Model the keyboard closing on native editor blur. Pointer release
+					// stays at the original Send coordinates, as on a real phone.
 					await draft.evaluate((node) => {
+						const viewport = window.visualViewport!;
+						Object.defineProperty(viewport, "height", {
+							configurable: true,
+							value: 300,
+						});
 						node.addEventListener(
-							"focus",
-							() => node.setAttribute("data-pointer-refocused", "true"),
+							"blur",
+							() => {
+								Object.defineProperty(viewport, "height", {
+									configurable: true,
+									value: 844,
+								});
+								viewport.dispatchEvent(new Event("resize"));
+							},
 							{ once: true },
 						);
+						node.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
 					});
-					await followUp.click();
-					await expect(draft).not.toHaveAttribute(
-						"data-pointer-refocused",
-						"true",
-					);
-				}
-			} else if (action === "next-tap") {
-				const box = (await send.boundingBox())!;
-				if (cdp && width === 390) {
-					await touch(
-						"touchStart",
-						box.x + box.width / 2,
-						box.y + box.height / 2,
-					);
-					await touch(
-						"touchMove",
-						box.x + box.width / 2 + 4,
-						box.y + box.height / 2 + 4,
-					);
-				} else {
+					await expect
+						.poll(() =>
+							page
+								.locator("main")
+								.evaluate((node) => node.getBoundingClientRect().height),
+						)
+						.toBe(300);
+					const box = (await send.boundingBox())!;
 					await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
 					await page.mouse.down();
-					await page.mouse.move(
-						box.x + box.width / 2 + 4,
-						box.y + box.height / 2 + 4,
+					await page.mouse.move(box.x - 20, box.y - 30);
+					await page.mouse.up();
+					await expect(draft).toBeFocused();
+					await expect(draft).toHaveValue(text);
+					expect(mutations).toHaveLength(count);
+					await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+					await page.mouse.down();
+					// iOS can still perform compatibility-mouse focus after a canceled
+					// pointerdown (WebKit 316402). Exercise that distinct default action.
+					await send.evaluate((node) => {
+						const down = new MouseEvent("mousedown", {
+							bubbles: true,
+							cancelable: true,
+							button: 0,
+						});
+						if (node.dispatchEvent(down)) (node as HTMLButtonElement).focus();
+					});
+					await page.evaluate(
+						() =>
+							new Promise<void>((resolve) =>
+								requestAnimationFrame(() =>
+									requestAnimationFrame(() => resolve()),
+								),
+							),
 					);
-				}
-				await expect(menu).toHaveAttribute("open", ""); // Small jitter still permits a hold.
-				if (cdp && width === 390) await touch("touchEnd");
-				else await page.mouse.up();
-				await page.keyboard.press("Escape");
-				await expect(menu).not.toHaveAttribute("open");
-				expect(mutations).toHaveLength(count);
-				// A fresh short tap after a dismissed hold must not be suppressed.
-				if (cdp && width === 390) {
-					const box = (await send.boundingBox())!;
-					await touch(
-						"touchStart",
-						box.x + box.width / 2,
-						box.y + box.height / 2,
-					);
-					await touch("touchEnd");
+					await page.mouse.up();
+				} else if (action === "selected-tap") {
+					await draft.focus();
+					await send.tap();
 				} else await send.click();
-			} else if (action === "alt-enter") await draft.press("Alt+Enter");
-			else if (action === "default") {
-				if (width === 390) await draft.press("Enter");
-				else {
-					await send.focus();
-					await page.keyboard.press("Enter"); // Keyboard Send needs no hold.
-				}
-			}
-			await expect(draft).toHaveValue("");
-			await expect(draft).not.toBeFocused();
-			await expect(menu).toHaveCount(0);
-			const mutationsBeforeInspection = mutations.length;
-			await expectBusyReceipt(
-				page,
-				mode === "steer"
-					? "Steering requested (completion unconfirmed)"
-					: "Follow-up requested (completion unconfirmed)",
-				text,
-			);
-			expect(mutations).toHaveLength(mutationsBeforeInspection);
-			if (action === "default")
-				await page.screenshot({
-					path: testInfo.outputPath(`request-receipt-${width}.png`),
+				await expect(draft).toHaveValue("");
+				await expect(draft).not.toBeFocused();
+				await expect(mode).toHaveValue(
+					action === "selected-enter" || action === "selected-tap"
+						? "followUp"
+						: "steer",
+				);
+				const inspected = mutations.length;
+				await expectBusyReceipt(
+					page,
+					delivery === "steer"
+						? "Steering requested (completion unconfirmed)"
+						: "Follow-up requested (completion unconfirmed)",
+					text,
+				);
+				expect(mutations).toHaveLength(inspected);
+				expect(
+					(await (await context.request.get("/api/fixture/dispatches")).json())
+						.lastText,
+				).toEqual({
+					text,
+					options: { expandPromptTemplates: false, deliverAs: delivery },
 				});
-			expect(
-				(await (await context.request.get("/api/fixture/dispatches")).json())
-					.lastText,
-			).toEqual({
-				text,
-				options: { expandPromptTemplates: false, deliverAs: mode },
-			});
+				if (action === "default" && width === 320)
+					await page.evaluate(() => {
+						Reflect.deleteProperty(window.visualViewport!, "height");
+						window.dispatchEvent(new Event("resize"));
+					});
+				await state("pending");
+			}
+			await draft.fill("Keep this draft when changing sessions");
+			const countAfterSends = mutations.length;
+			await mode.selectOption("followUp");
+			await chooseSession(page, other.instance);
+			await expect(mode).toHaveCount(0);
+			await chooseSession(page, owner.instance);
+			await expect(mode).toHaveValue("steer");
+			await expect(draft).toHaveValue("Keep this draft when changing sessions");
+			await mode.selectOption("followUp");
+			await state("no-pending");
+			await state("settled");
+			await expect(mode).toHaveCount(0);
 			await state("pending");
+			await state("work");
+			await expect(mode).toHaveValue("steer");
+			expect(mutations).toHaveLength(countAfterSends);
 		}
-		await draft.fill("clean busy bar");
-		for (const colorScheme of ["light", "dark"] as const) {
-			await page.emulateMedia({ colorScheme });
-			await page.screenshot({
-				path: testInfo.outputPath(`busy-clean-${width}-${colorScheme}.png`),
-			});
-		}
-		if (cdp && width === 390) {
-			await testInfo.attach("native-hold-and-short-tap", {
-				body: (await send.getAttribute("data-native-trace"))!,
-				contentType: "application/json",
-			});
-		}
-		await draft.fill("");
-	}
-	await cdp?.detach();
-	// An open hold menu and its consumed Send click must not interfere with Stop.
-	await draft.fill("Stop keeps this draft");
-	const send = page.getByRole("button", {
-		name: /^(Send|Steer)$/,
-		exact: true,
+		await draft.fill("Stop keeps this draft");
+		await mode.selectOption("followUp");
+		const aborts = (
+			await (await context.request.get("/api/fixture/dispatches")).json()
+		).aborts;
+		await page.getByRole("button", { name: "Stop", exact: true }).click();
+		await expect
+			.poll(
+				async () =>
+					(await (await context.request.get("/api/fixture/dispatches")).json())
+						.aborts,
+			)
+			.toBe(aborts + 1);
+		await expect(draft).toHaveValue("Stop keeps this draft");
+		expect(requests.map((r) => r.deliverAs)).toEqual([
+			"steer",
+			"followUp",
+			"followUp",
+			"followUp",
+			"steer",
+			"followUp",
+			"followUp",
+			"followUp",
+		]);
+		expect(new Set(requests.map((r) => r.requestId)).size).toBe(8);
+		expect(
+			requests.every(
+				(r) =>
+					r.instance === owner.instance && r.generation === owner.generation,
+			),
+		).toBe(true);
+		expect(
+			(await (await context.request.get("/api/fixture/dispatches")).json())
+				.dispatches,
+		).toBe(before + 8);
+		await state("reset");
+		questionCookies = await context.cookies();
 	});
-	const box = (await send.boundingBox())!;
-	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-	await page.mouse.down();
-	await expect(page.locator(".send-options")).toHaveAttribute("open", "");
-	await page.mouse.up();
-	const aborts = (
-		await (await context.request.get("/api/fixture/dispatches")).json()
-	).aborts;
-	await page.getByRole("button", { name: "Stop", exact: true }).click();
-	await expect
-		.poll(
-			async () =>
-				(await (await context.request.get("/api/fixture/dispatches")).json())
-					.aborts,
-		)
-		.toBe(aborts + 1);
-	await expect(draft).toHaveValue("Stop keeps this draft");
-	expect(requests.map((r) => r.deliverAs)).toEqual([
-		"steer",
-		"followUp",
-		"steer",
-		"followUp",
-		"steer",
-		"followUp",
-		"steer",
-		"followUp",
-	]);
-	expect(new Set(requests.map((r) => r.requestId)).size).toBe(8);
-	expect(
-		requests.every(
-			(r) => r.instance === owner.instance && r.generation === owner.generation,
-		),
-	).toBe(true);
-	expect(
-		(await (await context.request.get("/api/fixture/dispatches")).json())
-			.dispatches,
-	).toBe(before + 8);
-	await state("reset");
-	questionCookies = await context.cookies();
 });
 
 test("I2 busy text lost response retains original mode/id/text with explicit dedup retry and no reconnect resend", async ({
@@ -2955,7 +2756,9 @@ test("I2 busy text lost response retains original mode/id/text with explicit ded
 		};
 		page.on("request", listener);
 		const draft = page.getByLabel("Text for selected Pi (local draft)");
-		await expect(draft).toHaveAccessibleDescription(/Pi is busy — Send steers/);
+		await expect(draft).toHaveAccessibleDescription(
+			/Pi is busy — choose Steer or Follow-up/,
+		);
 		await draft.fill(`original ${mode}`);
 		await page.route(
 			"**/api/text",
@@ -3238,10 +3041,7 @@ test("I2 busy text older or unavailable bridges fail closed with owning Pi full-
 		).toHaveAccessibleDescription(
 			"Busy text unavailable — fully restart the owning Pi to load the updated bridge.",
 		);
-		await expectInputDetails(
-			page,
-			"Busy text unavailable — fully restart the owning Pi to load the updated bridge.",
-		);
+
 		await expect(
 			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 		).toBeDisabled();
@@ -3264,7 +3064,7 @@ test("I2 busy text older or unavailable bridges fail closed with owning Pi full-
 	await page
 		.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
 		.click();
-	await expectInputDetails(page, "Forwarded; completion unconfirmed");
+
 	await state("work");
 	await expect(draft).toHaveAccessibleDescription(/Busy text unavailable/);
 	await draft.fill("editable legacy draft");
@@ -3310,22 +3110,9 @@ test("I2 busy text older or unavailable bridges fail closed with owning Pi full-
 			});
 			await page.getByRole("button", { name: /^Open sessions:/ }).click();
 			const sidebar = page.getByRole("dialog", { name: "Live sessions" });
-			const details = sidebar.getByRole("region", { name: "Input details" });
 			await expect(
-				details.getByText(/Browser control held \(60s\)/),
-			).toBeVisible();
-			await expect(
-				details.getByText("Forwarded; completion unconfirmed", { exact: true }),
-			).toBeVisible();
-			await details.getByText("Details", { exact: true }).click();
-			await expect(details.locator("details p")).toContainText(
-				`Instance ${owner.instance}`,
-			);
-			await expect(details.locator("details p")).toContainText(
-				`Generation ${owner.generation}`,
-			);
-			await expect(details.locator("details p")).toContainText("Request ");
-			await details.getByText("Details", { exact: true }).click();
+				sidebar.getByRole("region", { name: "Input details" }),
+			).toHaveCount(0);
 			await sidebar.getByRole("button", { name: "Close sessions" }).click();
 			await expect(sidebar).toBeHidden();
 		}
@@ -3444,7 +3231,7 @@ test("C4 action acquisition captures image/text and questionnaire payloads, seri
 		}),
 	).toBeDisabled();
 	release();
-	await expectInputDetails(page, /Forwarded; completion unconfirmed/);
+
 	expect(controls).toEqual(["claim"]);
 	expect(order).toEqual(["claim", "confirm", "image"]);
 	expect(images).toHaveLength(1);
@@ -3847,7 +3634,7 @@ test("C4 action acquisition lease expiry and failed original reclaim preserve un
 	await expect(
 		page.getByRole("button", { name: "Release control", includeHidden: true }),
 	).toHaveCount(0);
-	await expectInputDetails(page, /Lease expired/);
+
 	expect(controls.filter((action) => action === "claim")).toHaveLength(1);
 	expect(controls).not.toContain("renew");
 	expect(sent).toHaveLength(1);
@@ -3883,7 +3670,7 @@ test("C4 action acquisition lease expiry and failed original reclaim preserve un
 	await page
 		.getByRole("button", { name: "Retry same outstanding input" })
 		.click();
-	await expectInputDetails(page, /Forwarded; completion unconfirmed/);
+
 	expect(sent).toHaveLength(2);
 	expect(sent[1].requestId).toBe(sent[0].requestId);
 	expect(sent[1].text).toBe(sent[0].text);
@@ -4972,19 +4759,58 @@ test("Native rename selected drawer Save/Cancel/Escape preserves draft, keyboard
 			mutations.push(req.url());
 	});
 	await page.getByRole("button", { name: /^Open sessions:/ }).click();
-	await expect(dialog.locator(".selected-session-name")).toHaveText(
-		"Selected: Browser test",
-	);
+	await expect(
+		dialog.locator(".session-card [aria-current=true] strong"),
+	).toHaveText("Browser test");
 	const rename = dialog.getByRole("button", {
 		name: "Rename session",
 		exact: true,
 	});
-	const renameBox = (await rename.boundingBox())!;
-	expect(renameBox.y + renameBox.height).toBeLessThanOrEqual(
+	await dialog.evaluate(async (node) => {
+		await Promise.all(
+			node.getAnimations().map((animation) => animation.finished),
+		);
+	});
+	await expect(
+		dialog.getByRole("region", { name: "Input details" }),
+	).toHaveCount(0);
+	await expect(
+		dialog
+			.getByRole("region", { name: "Device access" })
+			.getByRole("button", { name: "Forget this device" }),
+	).toBeVisible();
+	const footer = dialog.locator(".drawer-footer");
+	const leave = footer.getByRole("button", {
+		name: "Leave session",
+		exact: true,
+	});
+	expect((await leave.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+	expect((await footer.boundingBox())!.y).toBeGreaterThanOrEqual(
 		(await dialog
 			.getByRole("navigation", { name: "Terminal sessions" })
-			.boundingBox())!.y,
+			.boundingBox())!.y +
+			(await dialog
+				.getByRole("navigation", { name: "Terminal sessions" })
+				.boundingBox())!.height,
 	);
+	const renameBox = (await rename.boundingBox())!;
+	expect(renameBox.width).toBeGreaterThanOrEqual(44);
+	expect(renameBox.height).toBeGreaterThanOrEqual(44);
+	const cardBox = (await rename.locator("..").boundingBox())!;
+	expect(renameBox.x + renameBox.width).toBeCloseTo(
+		cardBox.x + cardBox.width,
+		0,
+	);
+	const cardBorder = await rename
+		.locator("..")
+		.evaluate((node) => parseFloat(getComputedStyle(node).borderTopWidth));
+	expect(renameBox.y).toBeCloseTo(cardBox.y + cardBorder, 0);
+	expect(
+		await rename.evaluate(
+			(node) =>
+				!!node.closest(".session-card")?.querySelector("[aria-current=true]"),
+		),
+	).toBe(true);
 	await rename.click();
 	const name = dialog.getByLabel("Session name", { exact: true });
 	await expect(name).toHaveValue("Browser test");

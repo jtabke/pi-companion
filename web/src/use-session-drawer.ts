@@ -79,7 +79,7 @@ export function useSessionDrawer(paired: boolean) {
 			const closing = !!sidebar.current?.open;
 			const control = target?.closest("button, a, summary");
 			const sessionTarget = control?.matches(
-				".session-card > button, .session-details > summary, .directory-details > summary",
+				".session-card > button:not(.rename-session), .session-details > summary",
 			);
 			if (
 				!matchMedia("(max-width: 639px)").matches ||
