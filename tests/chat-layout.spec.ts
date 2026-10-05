@@ -634,7 +634,7 @@ for (const width of [320, 390, 900]) {
 			await draft.fill("");
 		}
 		if (width < 900) {
-			// Round3 recovery uses the existing overlay fixture at 320px and
+			// Composer recovery uses the existing overlay fixture at 320px and
 			// the layout-viewport fallback at 390px; neither emulates a native keyboard.
 			const draft = page.getByPlaceholder("Message Pi");
 			const menu = page.getByRole("button", { name: /^Open sessions:/ });
@@ -707,7 +707,7 @@ for (const width of [320, 390, 900]) {
 					),
 				).toBe(true);
 				console.log(
-					"ROUND3_GEOMETRY",
+					"COMPOSER_RECOVERY_GEOMETRY",
 					JSON.stringify({
 						engine: browserName,
 						width,
@@ -806,7 +806,7 @@ for (const width of [320, 390, 900]) {
 						};
 					});
 					console.log(
-						"ROUND3_CONTROL_ACCESS",
+						"COMPOSER_RECOVERY_CONTROL_ACCESS",
 						JSON.stringify({ engine: browserName, width, state, ...access }),
 					);
 					expect(access.intercepted, state).toEqual([]);
@@ -874,7 +874,7 @@ for (const width of [320, 390, 900]) {
 				};
 			});
 			console.log(
-				"ROUND3_EDITING",
+				"COMPOSER_RECOVERY_EDITING",
 				JSON.stringify({ engine: browserName, width, ...editing }),
 			);
 			expect(editing.height).toBeLessThanOrEqual(136);

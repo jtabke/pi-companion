@@ -898,7 +898,7 @@ test("C4 delayed pre-takeover claim/renew responses never restore old holder aut
 });
 
 for (const width of [320, 390])
-	test(`C4-B ordered local images, limits, session drafts and immutable retry at ${width}px`, async ({
+	test(`ordered local images, limits, session drafts and immutable retry at ${width}px`, async ({
 		page,
 		context,
 	}, testInfo) => {
@@ -4480,7 +4480,7 @@ const pairingHeaders = {
 	"x-c2-csrf": "input",
 };
 async function forgetPairedContext(context: BrowserContext) {
-	// Every new remembered fixture device is cleaned through the real self-only route.
+	// New fixture pairings are cleaned through the real self-only route.
 	const response = await context.request.post("/api/forget", {
 		headers: pairingHeaders,
 		data: {},
