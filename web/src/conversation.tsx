@@ -364,7 +364,17 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 	let imageNumber = 0;
 	const conversation: React.ReactNode[] = [];
 	let toolStack: React.ReactNode[] | undefined;
-	snapshot?.items.forEach((item) => {
+	snapshot?.items.forEach((nativeItem) => {
+		const item = {
+			...nativeItem,
+			blocks: nativeItem.blocks.filter(
+				(block) =>
+					block.type !== "thinking" ||
+					!!block.text.trim() ||
+					!!block.omittedChars,
+			),
+		};
+		if (!item.blocks.length && !item.tool) return;
 		const imageOffset = imageNumber;
 		imageNumber += item.blocks.filter((block) => block.type === "image").length;
 		const isTool = item.role.startsWith("tool:");
@@ -414,7 +424,9 @@ export function Conversation({ snapshot }: { snapshot?: Snapshot }) {
 			item.blocks.length > 0 &&
 			item.blocks.every((block) => block.type === "tool");
 		const redundantRole =
-			(isTool && (!!output.length || !!item.tool)) || item.role === "assistant";
+			(isTool && (!!output.length || !!item.tool)) ||
+			item.role === "assistant" ||
+			item.role === "user";
 		const article = (
 			<article
 				className={`message message-${item.role === "user" ? "user" : item.role === "assistant" ? "assistant" : "event"}${onlyToolCalls ? " visually-hidden" : ""}`}

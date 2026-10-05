@@ -5214,6 +5214,58 @@ for (const width of [320, 390, 900])
 				externalImages.push(request.url());
 		});
 		await page.goto(`/#session=${identity.instance}:${identity.generation}`);
+		await page.evaluate(() =>
+			(
+				window as unknown as {
+					appendToolItems: (items: Snapshot["items"]) => void;
+				}
+			).appendToolItems([
+				{
+					id: "empty-thinking",
+					role: "assistant",
+					blocks: [{ type: "thinking", text: "" }],
+				},
+				{
+					id: "blank-thinking",
+					role: "assistant",
+					blocks: [{ type: "thinking", text: " \n\t " }],
+				},
+				{
+					id: "answer-with-empty-thinking",
+					role: "assistant",
+					blocks: [
+						{ type: "thinking", text: "" },
+						{ type: "text", text: "Answer without an empty disclosure" },
+					],
+				},
+				{
+					id: "omitted-thinking",
+					role: "assistant",
+					blocks: [{ type: "thinking", text: "", omittedChars: 12 }],
+				},
+			]),
+		);
+		await expect(
+			page.locator(
+				'[data-native-item="empty-thinking"], [data-native-item="blank-thinking"]',
+			),
+		).toHaveCount(0);
+		const answerWithEmptyThinking = page.locator(
+			'[data-native-item="answer-with-empty-thinking"]',
+		);
+		await expect(answerWithEmptyThinking).toContainText(
+			"Answer without an empty disclosure",
+		);
+		await expect(
+			answerWithEmptyThinking.locator(".thinking-disclosure"),
+		).toHaveCount(0);
+		const omittedThinking = page.locator(
+			'[data-native-item="omitted-thinking"] .thinking-disclosure',
+		);
+		await omittedThinking.locator("summary").click();
+		await expect(omittedThinking.locator(".preview-note")).toHaveText(
+			"Preview shortened · 12 characters omitted.",
+		);
 		const thinking = page.locator('[data-native-item="intro"] details');
 		const thinkingSummary = thinking.locator("summary");
 		await expect(thinkingSummary).toHaveText("Thinking");
@@ -5477,7 +5529,7 @@ for (const width of [320, 390, 900])
 		expect(externalImages).toEqual([]);
 		await expect(
 			page.getByRole("article", { name: "assistant", exact: true }),
-		).toHaveCount(4);
+		).toHaveCount(6);
 		await expect(page.locator('[data-native-item="call-only"]')).toHaveClass(
 			/visually-hidden/,
 		);
@@ -5639,7 +5691,7 @@ for (const width of [320, 390, 900])
 		).toHaveClass(/visually-hidden/);
 		await expect(
 			page.getByRole("heading", { name: "Pi", exact: true }),
-		).toHaveCount(4);
+		).toHaveCount(6);
 		for (const heading of await page
 			.locator(".message-assistant .message-role")
 			.all()) {
@@ -5896,6 +5948,8 @@ for (const width of [320, 390, 900])
 			"tool-three",
 			"tool-four",
 			"after",
+			"answer-with-empty-thinking",
+			"omitted-thinking",
 			"live-update",
 			"single-write",
 			"append-shell",
@@ -7738,6 +7792,26 @@ for (const width of [320, 390]) {
 			"title",
 			snapshot.items[1].tool!.summary,
 		);
+		// Compact summaries retain a full touch row and align metadata on one line.
+		for (const row of await page.locator(".tool-disclosure > summary").all()) {
+			const layout = await row.evaluate((node) => {
+				const box = node.getBoundingClientRect();
+				const centers = [
+					...node.querySelectorAll(
+						".tool-icon, .tool-label, .tool-summary, .tool-state, .tool-chevron",
+					),
+				].map((part) => {
+					const rect = part.getBoundingClientRect();
+					return rect.top + rect.height / 2;
+				});
+				return {
+					height: box.height,
+					spread: Math.max(...centers) - Math.min(...centers),
+				};
+			});
+			expect(layout.height).toBe(44);
+			expect(layout.spread).toBeLessThan(1);
+		}
 		await edit.locator("summary").focus();
 		await page.keyboard.press("Enter");
 		await expect(edit.locator(".diff-added")).toHaveText(

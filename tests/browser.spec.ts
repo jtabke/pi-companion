@@ -2056,7 +2056,19 @@ for (const width of [320, 390])
 			),
 			fullPage: true,
 		});
+		await expect(page.locator("html")).toHaveCSS(
+			"background-color",
+			"rgb(255, 255, 255)",
+		);
 		await page.emulateMedia({ colorScheme: "dark" });
+		await expect(page.locator("html")).toHaveCSS(
+			"background-color",
+			"rgb(0, 0, 0)",
+		);
+		await expect(page.locator(".composer-bar")).toHaveCSS(
+			"background-color",
+			"rgb(38, 38, 38)",
+		);
 		await page.screenshot({
 			path: testInfo.outputPath(
 				`${testInfo.project.name}-${width}-controlled-dark.png`,
@@ -4242,11 +4254,10 @@ for (const width of [320, 390])
 			assistantBox = (await assistant.boundingBox())!;
 		expect(userBox.x).toBeGreaterThan(assistantBox.x);
 		expect(userBox.width).toBeLessThan(assistantBox.width);
-		expect(
-			await user.evaluate((node) =>
-				parseFloat(getComputedStyle(node).borderRadius),
-			),
-		).toBeGreaterThanOrEqual(20);
+		await expect(user).toHaveAccessibleName("user");
+		await expect(user.locator(".message-role")).toHaveClass(/visually-hidden/);
+		await expect(user.locator(".message-role")).toHaveCSS("width", "1px");
+		await expect(user).toHaveCSS("border-radius", "12px");
 		expect(
 			await assistant.evaluate((node) =>
 				parseFloat(getComputedStyle(node).borderTopWidth),
@@ -4292,6 +4303,10 @@ for (const width of [320, 390])
 					() => document.documentElement.scrollWidth <= innerWidth,
 				),
 			).toBe(true);
+			await expect(user).toHaveCSS(
+				"background-color",
+				colorScheme === "dark" ? "rgb(20, 20, 20)" : "rgb(244, 244, 244)",
+			);
 			await page.screenshot({
 				path: testInfo.outputPath(`chat-${width}-${colorScheme}.png`),
 				fullPage: true,
