@@ -2024,7 +2024,7 @@ for (const width of [320, 390, 900]) {
 			name: "Design session · Other project",
 			exact: true,
 		});
-		await expect(otherCard.getByRole("button")).toContainText("Input pending");
+		await expect(otherCard.getByRole("button")).toContainText("Queued");
 		await expect(otherCard.getByRole("button")).not.toContainText(
 			other.instance.slice(0, 8),
 		);
@@ -2574,7 +2574,7 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 	};
 	for (const [patch, text] of [
 		[{ parent: "working" }, "Needs answer"],
-		[{ pending: true }, "Input pending"],
+		[{ pending: true }, "Queued"],
 		[{ stop: "stopping" }, "Stopping"],
 		[{ stop: "parent-settled" }, "Stopped (observed)"],
 		[{ conflict: true }, "Ownership conflict"],
@@ -2615,7 +2615,7 @@ test("M3 home and sidebar groups exact working directories with recency and trut
 			? "green"
 			: text === "Ownership conflict"
 				? "red"
-				: ["Needs answer", "Input pending", "Stopping"].includes(text)
+				: ["Needs answer", "Queued", "Stopping"].includes(text)
 					? "amber"
 					: "gray";
 		for (const theme of ["light", "dark"] as const) {
@@ -3930,7 +3930,7 @@ for (const width of [320, 390])
 			[
 				{ pending: true },
 				"Busy text unavailable — fully restart the owning Pi to load the updated bridge.",
-				"Input pending",
+				"Queued",
 			],
 			[
 				{ parent: "working" },
@@ -3991,13 +3991,26 @@ for (const width of [320, 390])
 			const send = (await page
 				.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
 				.boundingBox())!;
-			// Retained mobile drafts use the full editor row above the actions.
+			// Short drafts fit at 390px; narrower drafts wrap above the actions.
 			expect(editor.height).toBeGreaterThanOrEqual(44);
 			expect(editor.height).toBeLessThanOrEqual(136);
 			const bar = (await page.locator(".composer-bar").boundingBox())!;
-			expect(bar.height).toBe(editor.height + 44 + 14);
-			expect(editor.width).toBeCloseTo(bar.width - 10, 0);
-			expect(editor.y + editor.height + 4).toBeCloseTo(send.y, 0);
+			if (width === 390) {
+				const stopVisible = await page
+					.locator(".composer")
+					.getByRole("button", { name: "Stop", exact: true })
+					.isVisible();
+				expect(bar.height).toBe(editor.height + 10);
+				expect(editor.width).toBeCloseTo(
+					bar.width - (stopVisible ? 156 : 106),
+					0,
+				);
+				expect(editor.y).toBe(send.y);
+			} else {
+				expect(bar.height).toBe(editor.height + 44 + 14);
+				expect(editor.width).toBeCloseTo(bar.width - 10, 0);
+				expect(editor.y + editor.height + 4).toBeCloseTo(send.y, 0);
+			}
 			await page.screenshot({
 				path: testInfo.outputPath(`availability-${width}-${activity}.png`),
 			});

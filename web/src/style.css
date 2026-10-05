@@ -809,20 +809,6 @@ summary {
 .action-receipt summary {
 	padding: 8px 0;
 }
-.browser-input-receipt {
-	margin: 8px 0;
-	padding: 6px 8px;
-	border: 1px solid var(--line);
-	border-radius: 12px;
-}
-.browser-input-receipt .action-receipt {
-	margin: 0;
-	font-size: 0.875rem;
-}
-.receipt-caption {
-	font-size: 0.8125rem;
-	color: var(--muted);
-}
 .action-receipt .receipt-preview {
 	display: -webkit-box;
 	-webkit-box-orient: vertical;
@@ -1464,7 +1450,7 @@ pre:focus-visible,
 	color: light-dark(#15803d, #4ade80);
 }
 .session-activity[data-activity="Needs answer"] .session-dot,
-.session-activity[data-activity="Input pending"] .session-dot,
+.session-activity[data-activity="Queued"] .session-dot,
 .session-activity[data-activity="Stopping"] .session-dot {
 	color: light-dark(#a16207, #facc15);
 }

@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Composer, ActionReceipt } from "./composer.js";
+import { Composer } from "./composer.js";
 import { Conversation, SafeMarkdown } from "./conversation.js";
 import { useBrowserSession } from "./use-browser-session.js";
 import { useSessionDrawer } from "./use-session-drawer.js";
@@ -19,7 +19,7 @@ function sessionActivity(
 	if (conflict) return "Ownership conflict";
 	if (summary.stop === "stopping") return "Stopping";
 	if (summary.stop === "parent-settled") return "Stopped (observed)";
-	if (summary.pending) return "Input pending";
+	if (summary.pending) return "Queued";
 	if (summary.needsInput) return "Needs answer";
 	if (summary.parent === "working") return "Pi is working";
 	return summary.subagents ? "Subagent work active" : "Pi idle";
@@ -722,18 +722,6 @@ function App() {
 							key={`${selectedSummary.instance}/${selectedSummary.generation}`}
 							summary={selectedSummary}
 						/>
-					)}
-				{paired &&
-					selected &&
-					composer.inputReceipt?.routine &&
-					composer.inputReceipt.deliverAs && (
-						<section
-							className="browser-input-receipt"
-							aria-label="Latest browser request"
-						>
-							<p className="receipt-caption">Latest browser request</p>
-							<ActionReceipt {...composer.inputReceipt} />
-						</section>
 					)}
 			</ChatViewport>
 			<Composer

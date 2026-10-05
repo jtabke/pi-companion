@@ -244,12 +244,10 @@ try {
 	await page
 		.getByRole("button", { name: "Send Follow-up", exact: true })
 		.click();
-	await page.getByRole("region", { name: "Latest browser request" }).waitFor();
-	await page.locator('[data-native-item="edit"] summary').click();
-	await page
-		.locator(".chat-scroll")
-		.evaluate((e) => (e.scrollTop = e.scrollHeight));
-	await capture("request-receipt");
+	await page.waitForFunction(
+		() => document.querySelector("#draft")?.value === "",
+	);
+	assert.equal(await page.locator(".action-receipt").count(), 0);
 	await page.getByRole("button", { name: /^Open sessions:/ }).click();
 	await page.locator(".session-card .model-name").waitFor();
 	await capture("sessions-drawer");
@@ -260,7 +258,7 @@ try {
 	assert.deepEqual(requests, ["/api/control", "/api/text"]);
 	assert.deepEqual(unexpected, []);
 	console.log(
-		"Updated four README screenshots in docs/screenshots using sample-only data.",
+		"Updated three README screenshots in docs/screenshots using sample-only data.",
 	);
 } finally {
 	await browser?.close();

@@ -50,37 +50,11 @@ async function expectTakeoverAvailable(page: Page) {
 	await expect(sidebar).toBeHidden();
 }
 
-async function expectBusyReceipt(page: Page, message: string, text: string) {
-	const receipt = page.getByRole("region", { name: "Latest browser request" });
-	await expect(receipt).toHaveCount(1);
-	await expect(receipt.getByRole("status")).toHaveText(message);
-	await expect(receipt.locator(".receipt-preview")).toHaveText(
-		text.length > 240 ? `${text.slice(0, 240)}…` : text,
-	);
-	expect(await receipt.evaluate((node) => !!node.closest(".chat-scroll"))).toBe(
-		true,
-	);
-	await receipt.scrollIntoViewIfNeeded();
-	const preview = await receipt
-		.locator(".receipt-preview")
-		.evaluate((node) => ({
-			height: node.getBoundingClientRect().height,
-			line: parseFloat(getComputedStyle(node).lineHeight),
-		}));
-	expect(preview.height).toBeLessThanOrEqual(3 * preview.line + 0.5);
-	await receipt.getByText("Details", { exact: true }).click();
-	await expect(receipt.locator(".receipt-text")).toHaveText(text);
+async function expectNoSentReceipt(page: Page) {
+	await expect(page.locator(".composer .action-receipt")).toHaveCount(0);
 	await expect(
-		receipt.getByText(
-			message.startsWith("Steering") ? "Mode: Steer" : "Mode: Follow-up",
-			{ exact: true },
-		),
-	).toBeVisible();
-	await expect(
-		receipt.getByText(/Queue position and consumption are unknown/),
-	).toBeVisible();
-	await receipt.getByText("Details", { exact: true }).click();
-	await expect(page.locator(".composer .receipt-preview")).toHaveCount(0);
+		page.getByRole("region", { name: "Latest browser request" }),
+	).toHaveCount(0);
 }
 
 test("C4 Stop ignored abort stays Stopping; immutable explicit retry survives switching and restart without touching input drafts", async ({
@@ -3066,13 +3040,7 @@ test.describe("I2 native touch input", () => {
 						: "steer",
 				);
 				const inspected = mutations.length;
-				await expectBusyReceipt(
-					page,
-					delivery === "steer"
-						? "Steering requested (completion unconfirmed)"
-						: "Follow-up requested (completion unconfirmed)",
-					text,
-				);
+				await expectNoSentReceipt(page);
 				expect(mutations).toHaveLength(inspected);
 				expect(
 					(await (await context.request.get("/api/fixture/dispatches")).json())
@@ -3087,6 +3055,10 @@ test.describe("I2 native touch input", () => {
 						window.dispatchEvent(new Event("resize"));
 					});
 				await state("pending");
+				await expect(
+					page.locator("header").getByText("Queued", { exact: true }),
+				).toBeVisible();
+				await expectNoSentReceipt(page);
 			}
 			await draft.fill("Keep this draft when changing sessions");
 			const countAfterSends = mutations.length;
@@ -3099,6 +3071,13 @@ test.describe("I2 native touch input", () => {
 			await mode.selectOption("followUp");
 			await state("no-pending");
 			await state("settled");
+			await expect(
+				page.locator("header").getByText("Pi idle", { exact: true }),
+			).toBeVisible();
+			await expect(
+				page.locator("header").getByText("Queued", { exact: true }),
+			).toHaveCount(0);
+			await expectNoSentReceipt(page);
 			await expect(mode).toHaveCount(0);
 			await state("pending");
 			await state("work");
@@ -3218,13 +3197,7 @@ test("I2 busy text lost response retains original mode/id/text with explicit ded
 		await retry.evaluate((node) => (node as HTMLButtonElement).click());
 		await expect(retry).toHaveCount(0);
 		await expect(draft).toBeFocused(); // The forwarded original did not clear the newer draft.
-		await expectBusyReceipt(
-			page,
-			mode === "steer"
-				? "Steering requested (completion unconfirmed)"
-				: "Follow-up requested (completion unconfirmed)",
-			`original ${mode}`,
-		);
+		await expectNoSentReceipt(page);
 		expect(requests).toHaveLength(2);
 		expect(requests[1].requestId).toBe(requests[0].requestId);
 		expect(requests[1].text).toBe(`original ${mode}`);
@@ -3242,11 +3215,7 @@ test("I2 busy text lost response retains original mode/id/text with explicit ded
 			page.getByRole("region", { name: "Latest browser request" }),
 		).toHaveCount(0);
 		await chooseSession(page, owner.instance);
-		await expect(
-			page
-				.getByRole("region", { name: "Latest browser request" })
-				.locator(".receipt-preview"),
-		).toHaveText(`original ${mode}`);
+		await expectNoSentReceipt(page);
 		// Reload only after both routed loss cases. WebKit's now-controlling
 		// service worker can bypass page.route on subsequent requests.
 		if (mode === "followUp") {
@@ -3330,13 +3299,17 @@ test("I2 busy text delayed acquisition captures mode, allows Pi settling and nev
 		} else await chooseSession(page, other.instance);
 		release();
 		if (change !== "selection") {
-			await expectBusyReceipt(
-				page,
-				change === "idle"
-					? "Steering requested (completion unconfirmed)"
-					: "Follow-up requested (completion unconfirmed)",
-				"captured busy text",
-			);
+			await expect
+				.poll(
+					async () =>
+						(
+							await (
+								await context.request.get("/api/fixture/dispatches")
+							).json()
+						).dispatches,
+				)
+				.toBe(before + 1);
+			await expectNoSentReceipt(page);
 			expect(requests).toHaveLength(1);
 			expect(requests[0].deliverAs).toBe(
 				change === "idle" ? "steer" : "followUp",

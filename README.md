@@ -29,8 +29,8 @@ replacement for Pi's terminal, tools, extensions or conversation storage.
   Preview/remove them locally before sending together. Send acquires free browser control for idle
   text or an image; pasting alone never sends or takes control.
 - **Busy text:** choose Steer or Follow-up beside **+**, then tap the send arrow,
-  without stopping Pi. Review the latest request's text and mode
-  in an expandable receipt; it is not Pi's live queue.
+  without stopping Pi. **Queued** in the session status means Pi has messages waiting.
+  Successful requests do not leave a permanent receipt.
 - **Native slash commands:** run `/new` and `/reload` in the existing Pi terminal, or
   choose a model in the browser with `/model`. Prompt templates and skills remain available.
   Suggestions appear above the input; unverified commands stay terminal-only.
@@ -61,10 +61,6 @@ content. These are browser captures, not photos of a physical phone. Click an im
   </tr>
   <tr>
     <td valign="top">
-      <a href="docs/screenshots/request-receipt.png"><img src="docs/screenshots/request-receipt.png" width="300" alt="Latest browser request receipt showing Follow-up requested, completion unconfirmed, the request text, and a Details disclosure."></a>
-      <p><strong>Review what you requested.</strong> The latest successful Steer/Follow-up request has a text preview and expandable details. Delivery completion and queue position remain unconfirmed; the receipt disappears on reload.</p>
-    </td>
-    <td valign="top">
       <a href="docs/screenshots/sessions-drawer.png"><img src="docs/screenshots/sessions-drawer.png" width="300" alt="Compact live sessions drawer with a terminal count, the selected model and rename pencil inside its row, full-width grouped sessions, and visible footer and device controls."></a>
       <p><strong>Switch between live terminals.</strong> Sessions are grouped by working directory. The selected model and rename pencil stay inside its row. Leave, control actions and Device access sit below the list.</p>
     </td>
@@ -79,14 +75,14 @@ After the [development setup](#install-and-build-from-the-checkout), run from th
 # Once, if the project's Chromium binary is not installed:
 PLAYWRIGHT_BROWSERS_PATH=.cache/playwright npx playwright install chromium
 
-# Rebuild the current UI and regenerate all four images:
+# Rebuild the current UI and regenerate all three images:
 npm run screenshots
 ```
 
 [`scripts/screenshots.mjs`](scripts/screenshots.mjs) serves the built UI on a temporary
 loopback port and uses Playwright with isolated sample API responses. It does not connect
 to the running gateway, read private sessions, call a model, or change browser access.
-It closes its browser and server after capture. The command overwrites only the four
+It closes its browser and server after capture. The command overwrites only the three
 images in `docs/screenshots/`; review the images and captions together before committing.
 Update the sample scenario in the script when the illustrated journey changes.
 
@@ -163,13 +159,12 @@ a canceled press or scrolling gesture does not send.
 **Shift+Enter** inserts a newline; Stop stays separate. Pi owns steering boundaries and follow-up timing;
 these requests do not interrupt a running tool.
 Steer uses Pi's next steering boundary; Follow-up waits until after the current run.
-This guidance does not reserve conversation or composer space. The latest successful browser Steer/Follow-up request
-has one receipt with a compact text preview and expandable full text, mode and request
-identity. It replaces the prior receipt; it is not another transcript or Pi's live queue.
-The receipt remains an observation of dispatch, not confirmation that the message is
-still waiting or was consumed. It is kept only in memory and disappears on page reload.
-Status says **requested**, not confirmed queued or processed. Multiple deliberate requests
-are allowed. Lost responses retain the original ID/text/mode for explicit retry; refreshing
+This guidance does not reserve conversation or composer space. Successful requests do not
+leave a permanent receipt. The session status says **Queued** while Pi reports messages
+waiting, then returns to the observed activity when the queue clears. This status covers
+Pi's queue, including terminal input; it does not identify individual messages or confirm
+their completion. Delivered messages appear in Pi's native conversation. Multiple deliberate
+requests are allowed. Lost responses retain the original ID/text/mode for explicit retry; refreshing
 or reconnecting never resends input. Busy image attachments remain local and must be
 removed before requesting busy text. Their routine explanation stays in the editor's accessible description, not above the thumbnails. Safety and error
 notices remain visible.
