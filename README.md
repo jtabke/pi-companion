@@ -140,5 +140,5 @@ authentication, session identity and media handling.
   and upstream license; no global installation.
 - [Native probes](probes/README.md): isolated opt-in commands and their limits.
 
-Pi Companion has no declared project license yet. The integration's copied MIT license
-covers only its upstream material. Packaging and publishing remain separate decisions.
+Pi Companion is licensed under the [MIT License](LICENSE). Third-party material retains
+its upstream license notices. Packaging and publishing remain separate decisions.
