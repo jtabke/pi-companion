@@ -109,7 +109,7 @@ The check itself exits 0 when both cases pass. Each owner has a 45-second deadli
 plus bounded shutdown/cleanup waits. No unrelated probe suites are required.
 
 This does not prove browser rendering/security, larger-image/provider limits, real
-screenshot capture or iPhone support. See [Companion's current limits](../README.md#limitations).
+screenshot capture or iPhone support. See [Companion's setup and verification notes](../docs/setup.md#prerequisites).
 
 ## Browser/native input fixture
 

@@ -122,7 +122,7 @@ Display text never grants control or changes parent activity, Send/Follow-up adm
 Stop, retry or questionnaire behavior. Existing authentication and origin checks apply.
 
 After changing the bridge/schema, rebuild and restart affected Pi terminals and the
-gateway through the [documented lifecycle](../README.md#stop-restart-and-reconnect).
+gateway through the [documented lifecycle](setup.md#stop-restart-and-reconnect).
 Save unsent drafts and let active work finish first. Production-boundary fixtures cover
 the display contract; they do not establish real-phone behavior or compatibility with
 an installed publisher.

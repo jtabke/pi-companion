@@ -79,4 +79,4 @@ questionnaire replacement requires a separate decision. Companion depends on thi
 public event/reply contract, not private TUI methods. The integration preserves terminal
 completion and rejects stale replies; it does not bridge arbitrary custom dialogs.
 Source restoration and fixture checks do not prove global installation, another Pi
-version, or real-phone questionnaire behavior. See [current limits](../README.md#limitations).
+version, or real-phone questionnaire behavior. See [setup and verification notes](../docs/setup.md#prerequisites).
