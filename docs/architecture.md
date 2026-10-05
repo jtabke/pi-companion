@@ -2,7 +2,7 @@
 
 [Back to Pi Companion](../README.md) · [Setup guide](setup.md)
 
-## Architecture and philosophy
+## Runtime boundaries
 
 ```text
 Pi terminals (each owns its session)
@@ -13,15 +13,17 @@ Loopback gateway (127.0.0.1)
           +---- private Tailscale Serve (HTTPS) ---- phone browser
 ```
 
-Pi owns behavior, history, tools, settings and subagents. Each terminal remains the
-session owner; the gateway never creates a second agent or writes a parallel transcript.
-Browser control is explicit, access requires pairing, and uncertain input is never
-silently resent. Closing the browser or gateway does not stop Pi.
+Each Pi terminal owns its session, history, tools, settings and subagents. The gateway
+reads public snapshots and dispatches native actions; it creates neither a second agent
+nor a parallel transcript.
 
 ### Code ownership and technologies
 
 - `src/extension/`: public Pi events, active-branch snapshots and native dispatch.
-  It loads inside existing terminal sessions; print/JSON/RPC sessions do not register.
+  Pi loads the TypeScript source entry so `/reload` can load bridge changes. Native
+  commands use the public custom-editor submission hook, captured after synchronous
+  session-start handlers; a later editor replacement disables command admission.
+  Print/JSON/RPC sessions do not register.
 - `src/gateway/`: Fastify HTTP routing, authentication, control, media and managed runtime.
   Node HTTP uses private Unix-domain sockets to reach bridges. `fs-ext` holds the
   gateway's process-lifetime lock; PID/mtime guesses do not establish ownership.
@@ -32,9 +34,8 @@ silently resent. Closing the browser or gateway does not stop Pi.
 - `scripts/`: declaration-link setup, managed restart and sample-data README screenshot generation. `tests/` uses Vitest and
   Playwright fixtures. `probes/` contains explicit isolated native-Pi checks.
 
-The package uses strict TypeScript and native ESM with pinned npm dependencies. Keep
-one package and one owner for each policy; do not add a second Pi runtime or transcript
-store. The [contributor guide](../AGENTS.md) governs changes and validation.
+The package uses strict TypeScript and native ESM with pinned npm dependencies.
+The [contributor guide](../AGENTS.md) governs changes and validation.
 
 ### Identity, input and media boundaries
 
@@ -68,8 +69,6 @@ Pi and loaded extensions are trusted code, not an OS sandbox. Tailscale access r
 restrict access to the owner; private Serve does not make agent actions harmless.
 
 Trusted extensions may contribute read-only plain-text cards during existing status reads.
-These cards, including Subagents, sit at the bottom of the conversation and scroll away
-when reading earlier messages; they do not reserve space above the message scroller.
-See the [extension display contract](../docs/extension-display.md) for publisher rules and
-bounds. Displays never grant control or alter input policy; publishers must omit secrets
-and private state. There is no widget mirror, action API, display history or extra poller.
+See the [extension display contract](extension-display.md) for publisher rules and
+bounds. Displays never grant control or alter input policy. There is no widget mirror,
+action API, display history or extra poller.

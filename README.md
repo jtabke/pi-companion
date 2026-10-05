@@ -61,7 +61,7 @@ optional questionnaires, and browser controls.
 Follow the [setup guide](docs/setup.md) to install dependencies, build Companion, register
 its bridge, and fully restart Pi. This currently requires a development checkout, not a
 standalone published installer. Setup has been checked on macOS; see the guide for exact
-Pi and Node versions and verification notes.
+Pi and Node requirements and verification limits.
 
 For phone access, sign in to Tailscale on both your computer and phone. Keep tailnet
 access restricted to the owner.
@@ -77,8 +77,7 @@ npm start -- pair
 ```
 
 Open that HTTPS address on your phone, enter the pairing code, and choose a live session.
-Leave **Remember this device** checked to retain access across gateway restarts for
-30 days after pairing. The gateway keeps running after you close its launching terminal.
+Device access options and expiry are covered in the [pairing guide](docs/setup.md#3-pair-and-remember-your-device).
 
 Commands use `tailscale` from PATH. If it is missing or uses an unsupported macOS wrapper,
 see the [CLI workaround](docs/setup.md#if-companion-cannot-find-the-tailscale-cli).
@@ -89,9 +88,8 @@ Already running? Open the same address. To rebuild and restart the managed gatew
 npm run restart
 ```
 
-Pi sessions stay running. Bridge updates also need native `/reload` in each idle Pi
-terminal. See [stop, restart and reconnect](docs/setup.md#stop-restart-and-reconnect)
-for safe update steps. You can also [add Companion to your phone's home screen](docs/setup.md#install-on-your-phone)
+Pi sessions stay running. For bridge updates and safe recovery, follow
+[stop, restart and reconnect](docs/setup.md#stop-restart-and-reconnect). You can also [add Companion to your phone's home screen](docs/setup.md#install-on-your-phone)
 or use [local HTTP mode without Tailscale](docs/setup.md#manual-local-http-mode).
 
 ## How it works
@@ -110,9 +108,7 @@ Pi owns the agent, tools, settings and conversation history. Companion provides 
 browser viewing and input surface, not a replacement terminal or a second transcript
 store. Closing the browser or gateway does not stop Pi.
 
-Access requires pairing. Browser control changes only through deliberate actions;
-reconnecting does not send input or acquire control. Uncertain input is never silently
-resent.
+Access requires pairing. Reconnecting does not send input or acquire control.
 
 > [!WARNING]
 > Browser access can control an agent with your computer user's permissions. Restrict
@@ -126,7 +122,7 @@ authentication, session identity and media handling.
 
 - **Input dispatch is not a completion receipt:** Pi's public input API returns no
   confirmation that Pi consumed or completed the input. Companion can report forwarding,
-  but a lost response leaves the outcome uncertain. Reconnecting never silently resends it.
+  but a lost response leaves the outcome uncertain. See [uncertain outcomes](docs/usage.md#control-and-uncertain-outcomes) before retrying.
 - **Stop is not a cancellation receipt:** Pi's abort API does not confirm cancellation
   of every queued input or background job. Companion observes parent settlement;
   parent idle does not prove that all work ended.

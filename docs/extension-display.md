@@ -89,8 +89,8 @@ export default function (pi: ExtensionAPI) {
 
 For a real provider, replace the sample text with explicitly selected public display
 state owned by that extension. The same generic browser renderer displays every card.
-No extension code or HTML is sent to the browser. This sample has not been installed or
-run against a personal Pi session; production-boundary fixtures establish the contract.
+No extension code or HTML is sent to the browser. Validate your publisher in an
+isolated session before loading it into a working terminal.
 
 ## Bounds and rejection
 
@@ -115,14 +115,11 @@ current, connected session; reconnect starts from fresh status data.
 The event bus connects trusted code in one Pi process. It is not authentication or a
 sandbox. Publishers **must not publish credentials, private paths, task prompts or
 other sensitive state**. A publisher that blocks its process violates this contract;
-Companion cannot sandbox local extension execution. The inspected public Pi event bus
-isolates throwing listeners; malformed contributions cannot invalidate native status.
+Companion cannot sandbox local extension execution. Malformed contributions are rejected without invalidating native status.
 
 Display text never grants control or changes parent activity, Send/Follow-up admission,
 Stop, retry or questionnaire behavior. Existing authentication and origin checks apply.
 
 After changing the bridge/schema, rebuild and restart affected Pi terminals and the
 gateway through the [documented lifecycle](setup.md#stop-restart-and-reconnect).
-Save unsent drafts and let active work finish first. Production-boundary fixtures cover
-the display contract; they do not establish real-phone behavior or compatibility with
-an installed publisher.
+Save unsent drafts and let active work finish first.
