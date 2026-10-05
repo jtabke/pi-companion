@@ -25,7 +25,7 @@ for (const width of [320, 390, 900])
 			omittedItems: 0,
 			items: Array.from({ length: 32 }, (_, index) => ({
 				id: `message-${index}`,
-				role: "assistant",
+				role: index === 0 ? "user" : "assistant",
 				blocks: [
 					{
 						type: "text" as const,
@@ -69,12 +69,34 @@ for (const width of [320, 390, 900])
 						);
 					}
 				}
+				const userAnimations: {
+					id: string | null;
+					duration: number | string;
+				}[] = [];
+				Object.defineProperty(window, "userAnimations", {
+					value: userAnimations,
+				});
+				const animate = Element.prototype.animate;
+				Element.prototype.animate = function (frames, options) {
+					const animation = animate.call(this, frames, options);
+					if (this.matches(".message-user"))
+						userAnimations.push({
+							id: this.getAttribute("data-native-item"),
+							duration: Number(animation.effect!.getTiming().duration),
+						});
+					return animation;
+				};
+				Object.defineProperty(window, "refreshChat", {
+					value: () => {
+						for (const source of sources) source.emit();
+					},
+				});
 				Object.defineProperty(window, "EventSource", { value: FixtureSource });
 				Object.defineProperty(window, "appendChatMessage", {
-					value: (text: string) => {
+					value: (text: string, role: "assistant" | "user" = "assistant") => {
 						snapshot.items.push({
 							id: text,
-							role: "assistant",
+							role,
 							blocks: [{ type: "text", text }],
 						});
 						for (const source of sources) source.emit();
@@ -164,13 +186,21 @@ for (const width of [320, 390, 900])
 		});
 		await expect(jump).toBeVisible();
 		const before = await history.evaluate((node) => node.scrollTop);
-		const append = async (text: string) => {
+		const append = async (
+			text: string,
+			role: "assistant" | "user" = "assistant",
+		) => {
 			await page.evaluate(
-				(text) =>
+				({ text, role }) =>
 					(
-						window as unknown as { appendChatMessage: (text: string) => void }
-					).appendChatMessage(text),
-				text,
+						window as unknown as {
+							appendChatMessage: (
+								text: string,
+								role: "assistant" | "user",
+							) => void;
+						}
+					).appendChatMessage(text, role),
+				{ text, role },
 			);
 			await expect(page.locator("article").last()).toContainText(text);
 			await page.evaluate(
@@ -496,5 +526,92 @@ for (const width of [320, 390, 900])
 		});
 		await append("Still following after an app-generated scroll");
 		await expect.poll(distance).toBeLessThanOrEqual(1);
+		const animations = () =>
+			page.evaluate(
+				() =>
+					(
+						window as unknown as {
+							userAnimations: { id: string; duration: number }[];
+						}
+					).userAnimations,
+			);
+		expect(await animations()).toEqual([]); // Initial history and reduced-motion updates stay still.
+		if (width === 390) {
+			await append("Reduced-motion native user message", "user");
+			expect(await animations()).toEqual([]);
+			await page.emulateMedia({ reducedMotion: "no-preference" });
+			await append("New native user message", "user");
+			expect(await animations()).toEqual([
+				{ id: "New native user message", duration: 180 },
+			]);
+			await page.evaluate(() =>
+				(window as unknown as { refreshChat: () => void }).refreshChat(),
+			);
+			await append("Streaming update does not replay message motion");
+			expect(await animations()).toHaveLength(1);
+			await history.evaluate((node) => {
+				node.dispatchEvent(
+					new WheelEvent("wheel", { bubbles: true, deltaY: -1 }),
+				);
+				node.scrollTop = 400;
+			});
+			await append("User message while reading history", "user");
+			expect(await animations()).toHaveLength(1);
+			const progress = await history.evaluate(async (node) => {
+				const start = node.scrollTop,
+					positions: number[] = [];
+				document.querySelector<HTMLButtonElement>(".jump-latest")!.click();
+				for (let frame = 0; frame < 120; frame++) {
+					await new Promise(requestAnimationFrame);
+					positions.push(node.scrollTop);
+					if (node.scrollHeight - node.clientHeight - node.scrollTop <= 1)
+						break;
+				}
+				return { start, positions, end: node.scrollHeight - node.clientHeight };
+			});
+			expect(
+				progress.positions.some(
+					(top) => top > progress.start && top < progress.end - 1,
+				),
+			).toBe(true);
+			await expect.poll(distance).toBeLessThanOrEqual(1);
+			await append("Output after smooth return");
+			await expect.poll(distance).toBeLessThanOrEqual(1);
+			await history.evaluate((node) => {
+				node.dispatchEvent(
+					new WheelEvent("wheel", { bubbles: true, deltaY: -1 }),
+				);
+				node.scrollTop = 400;
+			});
+			await expect(jump).toBeVisible();
+			const stoppedAt = await history.evaluate(async (node) => {
+				document.querySelector<HTMLButtonElement>(".jump-latest")!.click();
+				for (let frame = 0; frame < 120 && node.scrollTop <= 400; frame++)
+					await new Promise(requestAnimationFrame);
+				const event = new TouchEvent("touchstart", { bubbles: true });
+				Object.defineProperty(event, "touches", {
+					value: [{ clientX: 100, clientY: 100 }],
+				});
+				node.dispatchEvent(event);
+				const end = new TouchEvent("touchend", { bubbles: true });
+				Object.defineProperty(end, "touches", { value: [] });
+				node.dispatchEvent(end);
+				return node.scrollTop;
+			});
+			expect(stoppedAt).toBeGreaterThan(400);
+			expect(await distance()).toBeGreaterThan(1);
+			await append("Output after interrupted smooth return");
+			expect(await history.evaluate((node) => node.scrollTop)).toBeCloseTo(
+				stoppedAt,
+				0,
+			);
+			await expect(jump).toBeVisible();
+			await page.emulateMedia({ reducedMotion: "reduce" });
+			const immediate = await history.evaluate((node) => {
+				document.querySelector<HTMLButtonElement>(".jump-latest")!.click();
+				return node.scrollHeight - node.clientHeight - node.scrollTop;
+			});
+			expect(immediate).toBeLessThanOrEqual(1);
+		}
 		expect(mutations).toEqual([]);
 	});

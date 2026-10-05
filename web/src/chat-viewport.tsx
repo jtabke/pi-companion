@@ -19,6 +19,10 @@ export function ChatViewport({
 	const following = useRef(true);
 	const lastScrollTop = useRef(0);
 	const returningToBottom = useRef(false);
+	const jumping = useRef(false);
+	const observedUsers = useRef<{ owner: string; ids: Set<string> } | undefined>(
+		undefined,
+	);
 	const scrollbarStart = useRef<number | undefined>(undefined);
 	const touch = useRef<{ x: number; y: number; moved: boolean } | undefined>(
 		undefined,
@@ -73,6 +77,7 @@ export function ChatViewport({
 		measure();
 	}
 	function startReview() {
+		cancelJump();
 		if (touch.current) touch.current.moved = false;
 		// A fresh Review never inherits deferred work for already closed invocations.
 		if (
@@ -96,6 +101,7 @@ export function ChatViewport({
 	function disclose(target: Element) {
 		const summary = target.closest("summary");
 		if (!summary && !target.closest("button.image")) return;
+		cancelJump();
 		if (summary?.parentElement?.id === "question-review") startReview();
 		else {
 			returningToBottom.current = false;
@@ -115,9 +121,17 @@ export function ChatViewport({
 			questionBounds &&
 			questionBounds.top < bounds.bottom &&
 			questionBounds.bottom > bounds.top;
-		setAway(distance > 64 && !reviewingVisible);
+		setAway(distance > 64 && !reviewingVisible && !jumping.current);
+	}
+	function cancelJump() {
+		if (!jumping.current) return;
+		jumping.current = false;
+		const node = viewport.current;
+		if (node) node.scrollTo({ top: node.scrollTop, behavior: "instant" });
+		measure();
 	}
 	function scrollIntent(towardBottom: boolean) {
+		cancelJump();
 		returningToBottom.current = towardBottom;
 		following.current = false;
 		remember();
@@ -134,9 +148,14 @@ export function ChatViewport({
 	function latest() {
 		const node = viewport.current;
 		if (!node) return;
-		returningToBottom.current = false;
-		following.current = true;
-		node.scrollTop = node.scrollHeight;
+		const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+		jumping.current = smooth;
+		returningToBottom.current = smooth;
+		following.current = !smooth;
+		node.scrollTo({
+			top: node.scrollHeight,
+			behavior: smooth ? "smooth" : "instant",
+		});
 		lastScrollTop.current = node.scrollTop;
 		remember();
 		measure();
@@ -144,6 +163,7 @@ export function ChatViewport({
 	useLayoutEffect(() => {
 		const node = viewport.current;
 		if (!node) return;
+		cancelJump();
 		activeOwner.current = owner;
 		returningToBottom.current = false;
 		touch.current = undefined;
@@ -164,6 +184,35 @@ export function ChatViewport({
 			positions.current.delete(positions.current.keys().next().value!);
 		measure();
 	}, [owner]);
+	useLayoutEffect(() => {
+		const users = content.current?.querySelectorAll<HTMLElement>(
+			".message-user[data-native-item]",
+		);
+		if (!users) return;
+		const previous = observedUsers.current;
+		observedUsers.current = {
+			owner,
+			ids: new Set([...users].map((node) => node.dataset.nativeItem!)),
+		};
+		if (
+			previous?.owner !== owner ||
+			!following.current ||
+			touch.current ||
+			!viewport.current?.clientHeight ||
+			matchMedia("(prefers-reduced-motion: reduce)").matches
+		)
+			return;
+		for (const node of users) {
+			if (!previous.ids.has(node.dataset.nativeItem!))
+				node.animate(
+					[
+						{ opacity: 0.6, transform: "translateY(8px)" },
+						{ opacity: 1, transform: "translateY(0)" },
+					],
+					{ duration: 180, easing: "ease-out" },
+				);
+		}
+	}, [children, owner]);
 	useLayoutEffect(() => {
 		const node = viewport.current;
 		if (!node || pending === undefined) return; // Missing/disconnected observation is not closure.
@@ -258,6 +307,7 @@ export function ChatViewport({
 					}
 				}}
 				onTouchStartCapture={(event) => {
+					cancelJump();
 					const point = event.touches[0];
 					returningToBottom.current = false;
 					if (point)
@@ -294,10 +344,16 @@ export function ChatViewport({
 					measure();
 				}}
 				onScrollEnd={() => {
-					// Resume only after the native scroll sequence, not during its motion.
-					resumeAtBottom();
+					// Output may arrive during a deliberate jump; follow it only after motion ends.
+					if (jumping.current) {
+						jumping.current = false;
+						following.current = true;
+						viewport.current!.scrollTop = viewport.current!.scrollHeight;
+						lastScrollTop.current = viewport.current!.scrollTop;
+					} else resumeAtBottom();
 					returningToBottom.current = false;
 					remember();
+					measure();
 				}}
 			>
 				<div className="chat-content" ref={content}>
