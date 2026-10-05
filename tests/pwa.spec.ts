@@ -95,6 +95,29 @@ test("U6 manifest, public icons and worker activation clean only old app caches"
 			.raw()
 			.toBuffer();
 		expect([...corner]).toEqual([23, 23, 23]);
+		// Independently check Pi's pixel shape and fixed brand colors at cell centers.
+		const colors = {
+			".": [23, 23, 23],
+			C: [228, 138, 122],
+			B: [79, 142, 179],
+			Y: [234, 182, 93],
+		};
+		const pixels = ["CCC.", "B.C.", "BB.Y", "B..Y"];
+		for (const [row, cells] of pixels.entries())
+			for (const [column, cell] of [...cells].entries()) {
+				const pixel = await image
+					.clone()
+					.extract({
+						left: Math.floor(size * (0.25 + (column + 0.5) / 8)),
+						top: Math.floor(size * (0.25 + (row + 0.5) / 8)),
+						width: 1,
+						height: 1,
+					})
+					.removeAlpha()
+					.raw()
+					.toBuffer();
+				expect([...pixel]).toEqual(colors[cell as keyof typeof colors]);
+			}
 		// The full-bleed background is opaque; maskable foreground stays inside the safe circle.
 		if (path.includes("maskable")) {
 			const { data, info } = await image
@@ -105,7 +128,11 @@ test("U6 manifest, public icons and worker activation clean only old app caches"
 				outside = 0;
 			for (let y = 0; y < size; y++)
 				for (let x = 0; x < size; x++) {
-					if (data[(y * size + x) * info.channels] > 128) {
+					if (
+						data[(y * size + x) * info.channels] !== 23 ||
+						data[(y * size + x) * info.channels + 1] !== 23 ||
+						data[(y * size + x) * info.channels + 2] !== 23
+					) {
 						ink++;
 						if (Math.hypot(x - size / 2, y - size / 2) > size * 0.4) outside++;
 					}
@@ -120,7 +147,7 @@ test("U6 manifest, public icons and worker activation clean only old app caches"
 		await page.evaluate(() => navigator.serviceWorker.controller),
 	).toBeNull(); // No forced claim.
 	expect(await cacheContents(page)).toEqual({
-		"pi-companion-offline-v2": offlineFiles,
+		"pi-companion-offline-v3": offlineFiles,
 	});
 	await page.reload();
 	await expect
@@ -185,7 +212,7 @@ test("U6 manifest, public icons and worker activation clean only old app caches"
 	await expect(page.getByLabel("Pairing code")).toBeVisible(); // Update did not reload or replace this client.
 	expect(await cacheContents(page)).toEqual({
 		"pi-companion-offline-v1": ["/offline.html"],
-		"pi-companion-offline-v2": offlineFiles,
+		"pi-companion-offline-v3": offlineFiles,
 		"unrelated-app": ["/offline.css"],
 	});
 	await page.close(); // Release the old controlled client naturally.
@@ -202,7 +229,7 @@ test("U6 manifest, public icons and worker activation clean only old app caches"
 	await expect
 		.poll(() => cacheContents(nextClient))
 		.toEqual({
-			"pi-companion-offline-v2": offlineFiles,
+			"pi-companion-offline-v3": offlineFiles,
 			"unrelated-app": ["/offline.css"],
 		});
 });
@@ -430,7 +457,7 @@ test("U6 gateway cache/API exclusion and no offline mutation replay", async ({
 	).json();
 	expect(sent.dispatches).toBe(before.dispatches + 1);
 	expect(await cacheContents(page)).toEqual({
-		"pi-companion-offline-v2": offlineFiles,
+		"pi-companion-offline-v3": offlineFiles,
 	});
 	const mutations: { path: string; action?: string }[] = [];
 	page.on("request", (request) => {
@@ -529,7 +556,7 @@ test("U6 gateway cache/API exclusion and no offline mutation replay", async ({
 		page.getByRole("link", { name: "Open companion" }),
 	).toBeVisible();
 	expect(await cacheContents(page)).toEqual({
-		"pi-companion-offline-v2": offlineFiles,
+		"pi-companion-offline-v3": offlineFiles,
 	});
 	await context.setOffline(false);
 	await page.getByRole("link", { name: "Open companion" }).click();
@@ -556,7 +583,7 @@ test("U6 gateway cache/API exclusion and no offline mutation replay", async ({
 		await (await context.request.get("/api/fixture/dispatches")).json(),
 	).toEqual(sent);
 	expect(await cacheContents(page)).toEqual({
-		"pi-companion-offline-v2": offlineFiles,
+		"pi-companion-offline-v3": offlineFiles,
 	});
 });
 
@@ -625,7 +652,7 @@ test("U6 WebKit actual server loss serves the exact production offline fallback"
 			await page.evaluate(() => navigator.serviceWorker.controller?.scriptURL),
 		).toBe(`${origin}/sw.js`);
 		expect(await cacheContents(page)).toEqual({
-			"pi-companion-offline-v2": offlineFiles,
+			"pi-companion-offline-v3": offlineFiles,
 		});
 		server.closeAllConnections();
 		await new Promise<void>((resolve, reject) =>
@@ -649,7 +676,7 @@ test("U6 WebKit actual server loss serves the exact production offline fallback"
 			path: testInfo.outputPath("webkit-actual-offline-320.png"),
 		});
 		expect(await cacheContents(page)).toEqual({
-			"pi-companion-offline-v2": offlineFiles,
+			"pi-companion-offline-v3": offlineFiles,
 		});
 		await page.getByRole("link", { name: "Open companion" }).click();
 		await expect(

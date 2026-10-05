@@ -1,6 +1,6 @@
 // Bump this version when the public offline document or its assets change.
 const CACHE_PREFIX = "pi-companion-offline-";
-const CACHE_NAME = `${CACHE_PREFIX}v2`;
+const CACHE_NAME = `${CACHE_PREFIX}v3`;
 const OFFLINE_ASSETS = ["/offline.html", "/offline.css", "/icon-192.png"];
 
 self.addEventListener("install", (event) => {
