@@ -1,11 +1,17 @@
 # Pi Companion
 
-See and interact with your running Pi terminal sessions from a local browser or your
-phone. Review tool-generated screenshots at full size, send image feedback, and switch
-between sessions without starting another agent.
+Pi Companion lets you interact with Pi running on your computer from your phone or
+another browser through private Tailscale HTTPS access. Keep Pi working in its terminal
+while you read its output, reply, and switch between live sessions away from your desk.
+A local browser can also connect without Tailscale.
 
-Pi remains the agent. The companion is a private viewing and input surface, not a
-replacement for Pi's terminal, tools, extensions or conversation storage.
+The goal is to make multimedia viewing and input easy: open tool-generated screenshots
+and images at full size, zoom in to inspect details, and pick or paste images alongside
+text feedback. Current media support is still images, not audio or video.
+
+Pi remains the agent on your computer. Companion is a private viewing and input surface,
+not a replacement for Pi's terminal, tools, extensions or conversation storage. It does
+not start another agent or move your sessions to a hosted service.
 
 ## Features
 
