@@ -374,40 +374,36 @@ export function QuestionPanel({
 					if (phase === "submitting") {
 						sending.current = true;
 						setReceiptOwner(receipt);
-						setStatus(`${label}: submitting; completion unknown`);
+						setStatus(`${label}: Submitting`);
 					} else setAttempt(pending);
 				},
 			);
 			if (outcome === "blocked") return;
 			setReceiptOwner(receipt);
 			if (outcome === "too-large") {
-				setStatus(
-					`${label}: Not sent — reply exceeds 65,536 bytes; shorten notes or responses`,
-				);
+				setStatus(`${label}: Reply too large. Shorten it.`);
 			} else if (outcome === "changed" || outcome === "preparation-failed") {
 				setStatus(
-					`${label}: ${repeat ? "Uncertain — original completion unknown; repeat not sent" : outcome === "changed" ? "Not sent — control or invocation changed" : "Not sent — acquisition failed"}`,
+					`${label}: ${repeat ? "Answer unconfirmed. Repeat not sent." : "Not sent"}`,
 				);
 			} else if (outcome === "rejected") {
 				setAttempt(repeat ? { ...pending, uncertain: true } : undefined);
 				setStatus(
-					`${label}: ${repeat ? "Uncertain — repeat rejected; original completion unknown" : "Rejected before forwarding"}`,
+					`${label}: ${repeat ? "Answer unconfirmed. Repeat rejected." : "Rejected"}`,
 				);
 			} else if (outcome === "response-lost") {
 				setAttempt({ ...pending, uncertain: true });
-				setStatus(
-					`${label}: Uncertain — response lost or authority changed; no automatic retry`,
-				);
+				setStatus(`${label}: Answer unconfirmed. Check Pi before retrying.`);
 			} else if (
 				outcome === "uncertain" ||
 				(repeat && outcome !== "accepted")
 			) {
 				setAttempt({ ...pending, uncertain: true });
-				setStatus(`${label}: Uncertain — no automatic retry`);
+				setStatus(`${label}: Answer unconfirmed. Check Pi before retrying.`);
 			} else {
 				setAttempt(undefined);
 				setStatus(
-					`${label}: ${outcome === "accepted" ? "Answer completed — confirmed by live questionnaire callback" : outcome === "invalid" ? "Invalid reply — correct the form; still pending" : "No longer pending — no browser-won inference"}`,
+					`${label}: ${outcome === "accepted" ? "Submitted" : outcome === "invalid" ? "Invalid answer" : "No longer pending"}`,
 				);
 			}
 		} finally {
@@ -427,10 +423,7 @@ export function QuestionPanel({
 			hidden={!visible}
 		>
 			{currentState?.terminalOnly && (
-				<p role="status">
-					Observation limit reached — some requests are terminal-only for this
-					generation. No live request was evicted.
-				</p>
+				<p role="status">Answer remaining questions in Pi.</p>
 			)}
 			{!!currentState?.pending.length && (
 				<details id="question-review">
@@ -450,7 +443,7 @@ export function QuestionPanel({
 			{status && (
 				<div className="action-receipt">
 					{receiptOwner && keyOf(receiptOwner.identity) !== keyOf(identity) && (
-						<p>Receipt from another session — not the selected terminal.</p>
+						<p>Result from another session</p>
 					)}
 					<p role="status">{status}</p>
 					{receiptOwner && (

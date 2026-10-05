@@ -135,7 +135,7 @@ export function useBrowserSession({
 			? "Connected"
 			: session.transport === "connecting"
 				? "Connecting"
-				: "Disconnected — reconnecting; cached content is read-only";
+				: "Disconnected";
 	function publishSession() {
 		setSession({ ...live.current });
 	}
@@ -302,8 +302,7 @@ export function useBrowserSession({
 		if (renamePending.current.size >= 32) {
 			setRenameEditor({
 				...editor,
-				message:
-					"Rename uncertainty limit reached — check prior native names before another rename.",
+				message: "Check prior renames in Pi.",
 			});
 			return;
 		}
@@ -325,11 +324,11 @@ export function useBrowserSession({
 			);
 		};
 		let dispatched = false;
-		message("Acquiring control for captured name");
+		message("Acquiring control");
 		try {
 			const auth = await acquireAuthority(attempt.identity, epoch);
 			if (preparation.canceled) {
-				message("Not sent — rename canceled");
+				message("Canceled");
 				return;
 			}
 			if (
@@ -337,13 +336,13 @@ export function useBrowserSession({
 				!validAuthority(auth, attempt.identity, epoch) ||
 				liveSummary(attempt.identity)?.rename !== true
 			) {
-				message("Not sent — control or session changed");
+				message("Not sent");
 				return;
 			}
 			renamePreparation.current = undefined;
 			renamePending.current.set(key, attempt);
 			dispatched = true;
-			message("Saving — awaiting native observation");
+			message("Saving");
 			const response = await fetch("/api/rename", {
 				method: "POST",
 				headers: { "content-type": "application/json", "x-c2-csrf": "input" },
@@ -357,7 +356,7 @@ export function useBrowserSession({
 			if (!response.ok) {
 				if (renamePending.current.get(key) === attempt)
 					renamePending.current.delete(key);
-				message("Rejected before dispatch — name draft retained");
+				message("Rejected");
 				if (
 					authority.current === auth &&
 					(response.status === 401 || response.status === 409)
@@ -370,20 +369,17 @@ export function useBrowserSession({
 			if (renamePending.current.get(key) !== attempt) return;
 			if (receipt.status === "rejected") {
 				renamePending.current.delete(key);
-				message(`Rejected: ${receipt.reason} — name draft retained`);
+				message(`Rejected: ${receipt.reason}`);
 			} else
 				message(
 					receipt.status === "uncertain"
-						? "Uncertain — original name retained; no resend. Check native name."
-						: "Forwarded — awaiting native name observation; no resend.",
+						? "Rename uncertain. Check Pi."
+						: "Pending",
 				);
 		} catch {
-			if (!dispatched)
-				message("Not sent — preparation failed; name draft retained");
+			if (!dispatched) message("Not sent");
 			else if (renamePending.current.get(key) === attempt)
-				message(
-					"Uncertain — response lost; original name retained; no resend. Check native name.",
-				);
+				message("Rename uncertain. Check Pi.");
 		} finally {
 			if (renamePreparation.current === preparation)
 				renamePreparation.current = undefined;
@@ -431,11 +427,7 @@ export function useBrowserSession({
 			if (authority.current && authority.current.expires <= Date.now()) {
 				const expiredIdentity = authority.current.identity;
 				dropControl();
-				setInputStatus(
-					"Lease expired — read-only; next action can acquire control",
-					expiredIdentity,
-					true,
-				);
+				setInputStatus("Read-only", expiredIdentity, true);
 			}
 		}, 500);
 		const leave = () => dropControl();
@@ -495,41 +487,37 @@ export function useBrowserSession({
 		(selectedSummary.parent === "working" || !!selectedSummary.pending) &&
 		!stopAttempt;
 	// Presentation follows native activity and admission, never receipt wording.
-	let composerAvailability =
-		"Ready to send — drafts stay local until you Send.";
+	let composerAvailability = "";
 	if (
 		!current ||
 		view.connection !== "connected" ||
 		!session.observed ||
 		session.transport !== "open"
 	) {
-		composerAvailability =
-			"Disconnected — cached content is read-only; drafts stay local.";
+		composerAvailability = "Disconnected";
 	} else if (view.conflict) {
-		composerAvailability = "Ownership conflict — read-only; drafts stay local.";
+		composerAvailability = "Read-only";
 	} else if (operating) {
 		const sendingHere =
 			outstanding?.identity.instance === selected?.instance &&
 			outstanding?.identity.generation === selected?.generation;
 		composerAvailability =
 			outstanding && !outstanding.uncertain
-				? `${sendingHere ? "Sending" : "Sending to another session"} — awaiting a receipt.`
-				: "Action in progress — please wait; drafts stay local.";
+				? `${sendingHere ? "Sending" : "Sending elsewhere"}`
+				: "Please wait";
 	} else if (outstanding) {
-		composerAvailability =
-			"Input outcome unknown — original retained; no automatic retry.";
+		composerAvailability = "Delivery unknown";
 	} else if (view.controller?.held && !held) {
-		composerAvailability =
-			"Another browser has control — take over explicitly to send.";
+		composerAvailability = "Control held elsewhere";
 	} else if (!inputIdle) {
 		composerAvailability =
 			selectedSummary?.stop === "stopping"
-				? "Stopping — draft only until Pi is idle."
+				? "Stopping"
 				: selectedSummary?.busyText !== true
-					? "Busy text unavailable — fully restart the owning Pi to load the updated bridge."
+					? "Busy text unavailable. Restart Pi."
 					: attachment
-						? "Pi is busy — images stay local; remove the image to request Steer or Follow-up."
-						: "Pi is busy — choose Steer or Follow-up beside +, then Send. Alt+Enter requests Follow-up. Completion unconfirmed.";
+						? "Remove images to send while busy."
+						: "Choose Steer or Follow-up, then Send.";
 	}
 	if (reachable && !operating && !outstanding && slashNotice)
 		composerAvailability = slashNotice;
@@ -605,7 +593,7 @@ export function useBrowserSession({
 		if (!beginOperation()) return;
 		const epoch = controlEpoch.current;
 		let dispatched = false;
-		stopResult(pending, `Stop: requesting; outcome unconfirmed`);
+		stopResult(pending, "Stop: Requesting");
 		try {
 			const auth = await acquireAuthority(pending.identity, epoch);
 			const summary = liveSummary(pending.identity);
@@ -619,7 +607,7 @@ export function useBrowserSession({
 			) {
 				stopResult(
 					pending,
-					`Stop: ${pending.uncertain ? "Uncertain — original outcome unknown; retry not sent" : "Not sent — control or parent activity changed"}`,
+					`Stop: ${pending.uncertain ? "Outcome unknown. Retry not sent." : "Not sent"}`,
 				);
 				return;
 			}
@@ -638,7 +626,7 @@ export function useBrowserSession({
 				setStopAttempt(pending.uncertain ? pending : undefined);
 				stopResult(
 					pending,
-					`Stop: ${pending.uncertain ? "Uncertain — retry rejected; original outcome unknown" : "Rejected before dispatch"}`,
+					`Stop: ${pending.uncertain ? "Outcome unknown. Retry rejected." : "Rejected before dispatch"}`,
 				);
 				if (
 					authority.current === auth &&
@@ -654,19 +642,16 @@ export function useBrowserSession({
 			setStopAttempt(uncertain ? { ...pending, uncertain: true } : undefined);
 			stopResult(
 				pending,
-				`Stop: ${uncertain ? "Uncertain — original ID retained; no automatic retry" : receipt.status === "dispatched" ? "Forwarded; completion unconfirmed" : `Rejected: ${receipt.reason}`}`,
+				`Stop: ${uncertain ? "Outcome unknown. Check Pi before retrying." : receipt.status === "dispatched" ? "Pending" : `Rejected: ${receipt.reason}`}`,
 				!uncertain && receipt.status === "dispatched",
 			);
 		} catch {
 			if (!dispatched) {
-				stopResult(pending, `Stop: Not sent — preparation failed`);
+				stopResult(pending, `Stop: Not sent`);
 				return;
 			}
 			setStopAttempt({ ...pending, uncertain: true });
-			stopResult(
-				pending,
-				`Stop: Uncertain — response lost; no automatic retry`,
-			);
+			stopResult(pending, `Stop: Outcome unknown. Check Pi before retrying.`);
 		} finally {
 			endOperation();
 		}
@@ -785,7 +770,7 @@ export function useBrowserSession({
 			}
 			if (!response.ok) {
 				dropControl();
-				setInputStatus("Control request rejected — read-only", identity);
+				setInputStatus("Read-only", identity);
 				return;
 			}
 			// Keep the capability tentative/read-only until a fresh public projection confirms this revision.
@@ -824,10 +809,7 @@ export function useBrowserSession({
 					current.controller.expires <= Date.now()
 				) {
 					dropControl();
-					setInputStatus(
-						"Control changed before confirmation — read-only",
-						identity,
-					);
+					setInputStatus("Read-only", identity);
 					return;
 				}
 				// Do not rewind activity or pending questions observed by SSE while confirmation waited.
@@ -837,19 +819,14 @@ export function useBrowserSession({
 				setHeld(true);
 			}
 			setInputStatus(
-				result.lease
-					? "Browser control held (60s) — terminal remains usable"
-					: "Released — read-only",
+				result.lease ? "Control acquired" : "Read-only",
 				identity,
 				true,
 			);
 			return authority.current;
 		} catch {
 			dropControl();
-			setInputStatus(
-				"Control response lost — read-only; no automatic claim",
-				identity,
-			);
+			setInputStatus("Control unconfirmed. Read-only.", identity);
 		}
 	}
 	async function controlAction(action: "takeover" | "release" | "renew") {
@@ -907,7 +884,7 @@ export function useBrowserSession({
 		setOutstanding(pending);
 		const epoch = controlEpoch.current;
 		let dispatched = false;
-		inputResult(pending, "Acquiring control for captured input");
+		inputResult(pending, "Acquiring control");
 		const upload = pending.files ? new AbortController() : undefined;
 		imageUpload.current = upload;
 		try {
@@ -915,9 +892,7 @@ export function useBrowserSession({
 			if (!auth) {
 				inputResult(
 					pending,
-					pending.uncertain
-						? "Uncertain — original outcome unknown; retry not sent"
-						: "Not sent — control unavailable",
+					pending.uncertain ? "Outcome unknown. Retry not sent." : "Not sent",
 				);
 				return;
 			}
@@ -957,13 +932,13 @@ export function useBrowserSession({
 				inputResult(
 					pending,
 					pending.uncertain
-						? "Uncertain — original outcome unknown; retry not sent"
+						? "Outcome unknown. Retry not sent."
 						: "Control changed before dispatch; nothing sent",
 				);
 				return;
 			}
 			setOutstanding(pending);
-			inputResult(pending, "Sending — outcome not yet known");
+			inputResult(pending, "Sending");
 			dispatched = true;
 			const sourcesForSend = pending.sources;
 			const response = await fetch(pending.files ? "/api/image" : "/api/text", {
@@ -990,10 +965,7 @@ export function useBrowserSession({
 				// A prior uncertain attempt stays uncertain even if this retry fails before forwarding.
 				if (pending.uncertain) {
 					setOutstanding({ ...pending, uncertain: true });
-					inputResult(
-						pending,
-						"Uncertain — retry rejected; original outcome still unknown",
-					);
+					inputResult(pending, "Delivery unknown. Retry rejected.");
 				} else {
 					setOutstanding(undefined);
 					const result = await response.json();
@@ -1011,20 +983,17 @@ export function useBrowserSession({
 				(receipt.status === "rejected" && pending.uncertain)
 			) {
 				setOutstanding({ ...pending, uncertain: true });
-				inputResult(
-					pending,
-					"Uncertain — retain original ID/text; no automatic retry",
-				);
+				inputResult(pending, "Delivery unknown. Check Pi before retrying.");
 			} else {
 				setOutstanding(undefined);
 				inputResult(
 					pending,
 					receipt.status === "dispatched"
 						? pending.deliverAs === "steer"
-							? "Steering requested (completion unconfirmed)"
+							? "Steer requested"
 							: pending.deliverAs === "followUp"
-								? "Follow-up requested (completion unconfirmed)"
-								: "Forwarded; completion unconfirmed"
+								? "Follow-up requested"
+								: "Pending"
 						: `Rejected: ${receipt.reason === "terminal-draft" ? "Clear or send the unsent draft in the Pi terminal first" : receipt.reason === "model-no-images" ? "Current Pi model does not support images" : receipt.reason === "images-blocked" ? "Pi settings block images" : receipt.reason === "image-policy-unknown" ? "Pi model/image policy unavailable or unknown" : receipt.reason}`,
 					receipt.status === "dispatched",
 				);
@@ -1046,14 +1015,12 @@ export function useBrowserSession({
 			if (!dispatched) {
 				inputResult(
 					pending,
-					pending.uncertain
-						? "Uncertain — original outcome unknown; retry not sent"
-						: "Not sent — input preparation failed",
+					pending.uncertain ? "Outcome unknown. Retry not sent." : "Not sent",
 				);
 				return;
 			}
 			setOutstanding({ ...pending, uncertain: true });
-			inputResult(pending, "Uncertain — response lost; no automatic retry");
+			inputResult(pending, "Delivery unknown. Check Pi before retrying.");
 		} finally {
 			if (!dispatched) setOutstanding(pending.uncertain ? pending : undefined);
 			if (imageUpload.current === upload) imageUpload.current = undefined;
@@ -1293,8 +1260,7 @@ export function useBrowserSession({
 				if (active && scope === live.current.readLifetime)
 					transition({
 						...live.current,
-						error:
-							"Gateway unavailable — device access could not be checked. Refresh to check again, or pair explicitly when it is reachable.",
+						error: "Gateway unavailable. Refresh to check access.",
 					});
 			})
 			.finally(() => {
@@ -1342,9 +1308,7 @@ export function useBrowserSession({
 			setForgetStatus("");
 			transition({ ...live.current, paired: true });
 		} catch {
-			setAccessError(
-				"Pairing response lost or gateway unreachable — outcome unknown. Refresh to check access, or try a fresh code explicitly.",
-			);
+			setAccessError("Pairing unconfirmed. Refresh to check access.");
 		} finally {
 			endOperation();
 		}
@@ -1354,9 +1318,7 @@ export function useBrowserSession({
 		if (!beginOperation()) return;
 		forgetting.current = true;
 		transition({ ...live.current }, true);
-		setForgetStatus(
-			"Forgetting this device — awaiting confirmation. Native attempts are not cancelled.",
-		);
+		setForgetStatus("Removing device");
 		try {
 			const response = await fetch("/api/forget", {
 				method: "POST",
@@ -1370,20 +1332,14 @@ export function useBrowserSession({
 				return;
 			}
 			if (!response.ok) {
-				setForgetStatus(
-					response.status === 503
-						? "Forget unavailable — revocation not confirmed. Check your gateway, then retry Forget this device explicitly."
-						: "Forget rejected — revocation not confirmed. Retry Forget this device explicitly.",
-				);
+				setForgetStatus("Removal unconfirmed. Retry explicitly.");
 				return;
 			}
 			if ((await response.json()).forgotten !== true)
 				throw Error("Unconfirmed forget");
 			unpair("This device was forgotten. Native attempts are not cancelled.");
 		} catch {
-			setForgetStatus(
-				"Forget response lost or gateway unreachable — outcome unknown; revocation not confirmed. Retry Forget this device explicitly.",
-			);
+			setForgetStatus("Removal unconfirmed. Retry explicitly.");
 		} finally {
 			forgetting.current = false;
 			endOperation();
@@ -1524,10 +1480,7 @@ export function useBrowserSession({
 			commandModels,
 			acknowledgeCommand: () => {
 				if (!operating && outstanding?.nativeCommand && outstanding.uncertain) {
-					inputResult(
-						outstanding,
-						"Command outcome remains unknown — check Pi before submitting another command",
-					);
+					inputResult(outstanding, "Command outcome unknown. Check Pi.");
 					const key = identityKey(outstanding.identity);
 					if (drafts.current.get(key)?.text === outstanding.text) {
 						drafts.current.set(key, { text: "" });

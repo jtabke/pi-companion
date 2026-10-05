@@ -3750,10 +3750,7 @@ for (const access of [
 				}),
 			).toBeVisible();
 			await expect(
-				page.getByText(
-					"Disconnected — reconnecting; cached content is read-only",
-					{ exact: true },
-				),
+				page.getByText("Disconnected", { exact: true }),
 			).toBeVisible();
 			await expect(page.getByLabel("Pairing code")).toHaveCount(0);
 		} else {
@@ -3765,7 +3762,7 @@ for (const access of [
 				await expect(page.locator('.pairing [role="alert"]')).toBeEmpty();
 			else
 				await expect(page.getByRole("alert")).toContainText(
-					"Gateway unavailable — device access could not be checked",
+					"Gateway unavailable",
 				);
 		}
 		await expect(page.getByText("Checking this device…")).toHaveCount(0);
@@ -3854,9 +3851,7 @@ for (const width of [320, 390])
 		await page.goto(`/#session=${identity.instance}:${identity.generation}`);
 		const draft = page.getByPlaceholder("Message Pi"),
 			availability = page.locator("#composer-availability");
-		await expect(draft).toHaveAccessibleDescription(
-			"Ready to send — drafts stay local until you Send.",
-		);
+		await expect(draft).toHaveAccessibleDescription("");
 		await expect(
 			page.getByLabel("Images for selected Pi (local picker)"),
 		).toHaveAccessibleDescription(
@@ -3927,26 +3922,14 @@ for (const width of [320, 390])
 			page.locator("header").getByText("Stopped (observed)", { exact: true }),
 		).toBeVisible();
 		for (const [state, explanation, activity] of [
-			[
-				{ pending: true },
-				"Busy text unavailable — fully restart the owning Pi to load the updated bridge.",
-				"Queued",
-			],
+			[{ pending: true }, "Busy text unavailable. Restart Pi.", "Queued"],
 			[
 				{ parent: "working" },
-				"Busy text unavailable — fully restart the owning Pi to load the updated bridge.",
+				"Busy text unavailable. Restart Pi.",
 				"Pi is working",
 			],
-			[
-				{ stop: "stopping" },
-				"Stopping — draft only until Pi is idle.",
-				"Stopping",
-			],
-			[
-				{ conflict: true },
-				"Ownership conflict — read-only; drafts stay local.",
-				"Ownership conflict",
-			],
+			[{ stop: "stopping" }, "Stopping", "Stopping"],
+			[{ conflict: true }, "Read-only", "Ownership conflict"],
 			[
 				{
 					controller: {
@@ -3955,14 +3938,10 @@ for (const width of [320, 390])
 						expires: Date.now() + 60000,
 					},
 				},
-				"Another browser has control — take over explicitly to send.",
+				"Control held elsewhere",
 				"Pi idle",
 			],
-			[
-				{ connection: "disconnected" },
-				"Disconnected — cached content is read-only; drafts stay local.",
-				"Unavailable",
-			],
+			[{ connection: "disconnected" }, "Disconnected", "Unavailable"],
 		] as const) {
 			await page.evaluate(
 				(next) =>
@@ -4486,7 +4465,7 @@ for (const width of [320, 390])
 		});
 		await fixture("close"); // Terminal closure restores pre-Review reading, not browser success.
 		await expect.poll(top).toBe(350);
-		await expect(page.getByText(/Answer completed/)).toHaveCount(0);
+		await expect(page.getByText(/Submitted/)).toHaveCount(0);
 		for (const moved of [false, true]) {
 			await fixture("arrive", `touch-closure-${moved}`);
 			await review.click();
@@ -4547,7 +4526,7 @@ for (const width of [320, 390])
 			answers: [],
 		});
 		await expect.poll(top).toBe(350);
-		await expect(page.getByText(/Answer completed — confirmed/)).toBeVisible();
+		await expect(page.getByText(/Submitted/)).toBeVisible();
 		await page
 			.getByRole("button", { name: "Jump to latest", exact: true })
 			.click();
@@ -4581,11 +4560,9 @@ for (const width of [320, 390])
 				exact: true,
 			})
 			.click();
-		await expect(
-			page.getByText(/Uncertain — response lost or authority changed/),
-		).toBeVisible();
+		await expect(page.getByText(/Answer unconfirmed/)).toBeVisible();
 		await expect.poll(top).toBe(425);
-		await expect(page.getByText(/Answer completed/)).toHaveCount(0);
+		await expect(page.getByText(/Submitted/)).toHaveCount(0);
 		await expect(
 			page.getByRole("button", { name: "Repeat original questionnaire reply" }),
 		).toBeDisabled();
@@ -4599,10 +4576,7 @@ for (const width of [320, 390])
 		await choose("Other terminal");
 		await expect.poll(distance).toBeLessThanOrEqual(1);
 		await expect(
-			page.getByText(
-				"Receipt from another session — not the selected terminal.",
-				{ exact: true },
-			),
+			page.getByText("Result from another session", { exact: true }),
 		).toBeVisible();
 		await choose("Questions terminal");
 		await expect.poll(top).toBe(425);
@@ -5480,9 +5454,7 @@ for (const width of [320, 390, 900])
 			}),
 		);
 		await button.click();
-		await expect(block.getByRole("status")).toHaveText(
-			"Copy failed — select code to copy.",
-		);
+		await expect(block.getByRole("status")).toHaveText("Copy failed");
 		await expect(button).toBeEnabled();
 		await expect(block.locator("pre")).toHaveText(code, {
 			useInnerText: false,
@@ -7758,9 +7730,7 @@ for (const width of [320, 390]) {
 			}),
 		);
 		await copy.click();
-		await expect(answer.getByRole("status")).toHaveText(
-			"Copy failed — select answer to copy.",
-		);
+		await expect(answer.getByRole("status")).toHaveText("Copy failed");
 		const edit = page.locator('[data-native-item="edit"]');
 		await expect(edit.locator("summary")).toContainText("Edit");
 		await expect(edit.locator(".tool-summary")).toHaveText("main.ts");

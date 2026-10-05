@@ -423,7 +423,7 @@ test("U6 gateway cache/API exclusion and no offline mutation replay", async ({
 	});
 	await page.getByRole("button", { name: "Send", exact: true }).click();
 	await expect(
-		page.getByText(/Uncertain — response lost; no automatic retry/),
+		page.getByText(/Delivery unknown. Check Pi before retrying./),
 	).toBeVisible();
 	const sent = await (
 		await context.request.get("/api/fixture/dispatches")

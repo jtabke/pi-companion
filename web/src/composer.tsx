@@ -244,7 +244,7 @@ export function Composer({
 		(!controller?.held || held) &&
 		(draft === "/" || suggestions.length > 0);
 	const composerStatus = otherBrowserHoldsInput
-		? "Another browser has control — take over explicitly to send."
+		? "Control held elsewhere"
 		: browsingCommands
 			? ""
 			: composerAvailability;

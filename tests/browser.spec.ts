@@ -87,9 +87,7 @@ test("C4 Stop ignored abort stays Stopping; immutable explicit retry survives sw
 	).toBeVisible();
 	await expect(
 		page.getByLabel("Text for selected Pi (local draft)"),
-	).toHaveAccessibleDescription(
-		"Pi is busy — choose Steer or Follow-up beside +, then Send. Alt+Enter requests Follow-up. Completion unconfirmed.",
-	);
+	).toHaveAccessibleDescription("Choose Steer or Follow-up, then Send.");
 	await expect(
 		page.getByRole("button", {
 			name: "Stop",
@@ -121,7 +119,7 @@ test("C4 Stop ignored abort stays Stopping; immutable explicit retry survives sw
 	await page
 		.getByRole("button", { name: "Stop", exact: true, includeHidden: true })
 		.click();
-	await expect(page.getByText(/Stop: Uncertain — response lost/)).toBeVisible();
+	await expect(page.getByText(/Stop: Outcome unknown/)).toBeVisible();
 	await expect(
 		page.locator("header").getByText("Stopping", { exact: true }),
 	).toBeVisible();
@@ -157,7 +155,7 @@ test("C4 Stop ignored abort stays Stopping; immutable explicit retry survives sw
 	await expect(
 		page.getByRole("button", { name: "Retry same Stop request" }),
 	).toBeDisabled();
-	await expect(page.getByText(/Stop: Uncertain/)).toHaveCount(0);
+	await expect(page.getByText(/Stop: Outcome unknown/)).toHaveCount(0);
 	await expect(
 		page.getByText(
 			"Stop belongs to another session. Original retained; switch back to review.",
@@ -274,9 +272,7 @@ test("C4 Stop throw remains uncertain and authority loss/replacement never redir
 	await page
 		.getByRole("button", { name: "Stop", exact: true, includeHidden: true })
 		.click();
-	await expect(
-		page.getByText(/Stop: Uncertain — original ID retained/),
-	).toBeVisible();
+	await expect(page.getByText(/Stop: Outcome unknown/)).toBeVisible();
 	await page.getByRole("button", { name: "Retry same Stop request" }).click();
 	await expect(
 		page.getByRole("button", { name: "Retry same Stop request" }),
@@ -366,7 +362,7 @@ test("C4 Stop preserves an uncertain original image input independently of Stop 
 		})
 		.click();
 	await expect(
-		page.getByText(/Uncertain — response lost; no automatic retry/),
+		page.getByText(/Delivery unknown. Check Pi before retrying./),
 	).toBeVisible();
 	await page
 		.getByLabel("Text for selected Pi (local draft)")
@@ -540,7 +536,7 @@ test("C3 two tabs choose independently, switch rapidly, reconcile generation and
 	);
 	await expect(
 		tab.getByLabel("Text for selected Pi (local draft)"),
-	).toHaveAccessibleDescription(/Disconnected — cached content is read-only/);
+	).toHaveAccessibleDescription(/Disconnected/);
 	await expect(tab.locator("article")).toContainText("Owner B");
 	await expectSelected(tab, b);
 	await expect(page.locator("article")).toContainText("Owner A");
@@ -623,9 +619,7 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 	).toBeDisabled();
 	await expect(
 		tab.getByLabel("Text for selected Pi (local draft)"),
-	).toHaveAccessibleDescription(
-		"Another browser has control — take over explicitly to send.",
-	);
+	).toHaveAccessibleDescription("Control held elsewhere");
 	const takeoverResponse = tab.waitForResponse(
 		(r) =>
 			r.url().endsWith("/api/control") &&
@@ -672,7 +666,7 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 		})
 		.click();
 	await expect(
-		page.getByText("Uncertain — response lost; no automatic retry", {
+		page.getByText("Delivery unknown. Check Pi before retrying.", {
 			exact: false,
 		}),
 	).toBeVisible();
@@ -680,7 +674,7 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 	await context.request.post("/api/fixture/break-transport");
 	await expect(
 		page.getByLabel("Text for selected Pi (local draft)"),
-	).toHaveAccessibleDescription(/Disconnected — cached content is read-only/);
+	).toHaveAccessibleDescription(/Disconnected/);
 	await expect(
 		page.getByRole("button", { name: "Retry same outstanding input" }),
 	).toBeDisabled();
@@ -718,9 +712,7 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 	).toBe(0);
 	await chooseSession(page, b);
 	await expect(draft).toHaveValue("draft B");
-	await expect(
-		page.getByText("Forwarded; completion unconfirmed", { exact: true }),
-	).toHaveCount(0);
+	await expect(page.getByText("Pending", { exact: true })).toHaveCount(0);
 	await expect(
 		page.getByRole("button", {
 			name: /^(Send|Steer)$/,
@@ -750,15 +742,13 @@ test("C4 same-cookie controller, volatile separate drafts, lost response dedup a
 	await ready;
 	await expect(
 		page.getByLabel("Text for selected Pi (local draft)"),
-	).toHaveAccessibleDescription("Sending — awaiting a receipt.");
+	).toHaveAccessibleDescription("Sending");
 	await chooseSession(page, b);
 	release();
 	await expect(
 		page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
 	).toBeEnabled();
-	await expect(
-		page.getByText("Forwarded; completion unconfirmed", { exact: true }),
-	).toHaveCount(0);
+	await expect(page.getByText("Pending", { exact: true })).toHaveCount(0);
 	await expect(draft).toHaveValue("draft B");
 	await chooseSession(page, a);
 	await page.getByRole("button", { name: /^Open sessions:/ }).click();
@@ -1055,7 +1045,7 @@ for (const width of [320, 390])
 				.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
 				.click();
 			await expect(
-				page.getByText(/Uncertain — response lost; no automatic retry/),
+				page.getByText(/Delivery unknown. Check Pi before retrying./),
 			).toBeVisible();
 			expect(sent).toHaveLength(1);
 			await expect(page.locator(".composer-availability")).toHaveCount(0);
@@ -1075,7 +1065,7 @@ for (const width of [320, 390])
 			await sidebarClick(tab, "Take over browser control");
 			await expect(retry).toBeDisabled();
 			await expect(page.locator(".composer-availability")).toHaveText(
-				"Another browser has control — take over explicitly to send.",
+				"Control held elsewhere",
 			);
 			await context.request.post("/api/fixture/stop-state", {
 				data: { action: "work" },
@@ -1316,7 +1306,7 @@ test("U8 focused Enter dismisses only forwarded unchanged current input, includi
 				.getByText(
 					status === "rejected"
 						? /Rejected: fixture-rejection/
-						: /Uncertain — retain original ID/,
+						: /Delivery unknown/,
 				),
 		).toBeVisible();
 		await expect(draft).toBeFocused();
@@ -1394,9 +1384,7 @@ test("U8 focused Enter dismisses only forwarded unchanged current input, includi
 	await expect(send).toBeEnabled();
 	await page.route("**/api/control", (route) => route.abort(), { times: 1 });
 	await draft.press("Enter");
-	await expect(
-		page.locator(".composer").getByText(/Not sent — control unavailable/),
-	).toBeVisible();
+	await expect(page.locator(".composer").getByText(/Not sent/)).toBeVisible();
 	await expect(draft).toBeFocused();
 	await expect(draft).toHaveValue("not dispatched");
 	expect(requests).toHaveLength(8);
@@ -1489,7 +1477,7 @@ test("C4 questionnaire full safe content, free/multi/notes/cancel, reader/takeov
 		.click();
 	await state("invalid");
 	await submitQuestionnaire(page);
-	await expect(page.getByText(/Invalid reply — correct/)).toBeVisible();
+	await expect(page.getByText(/Invalid answer/)).toBeVisible();
 	expect(
 		(await (await state("invalid")).json()).replies.at(-1).answers,
 	).toEqual([{ questionIndex: 1, kind: "multi", answer: null, selected: [] }]);
@@ -1517,11 +1505,7 @@ test("C4 questionnaire full safe content, free/multi/notes/cancel, reader/takeov
 		"global exact",
 	);
 	await submitQuestionnaire(reader);
-	await expect(
-		reader.getByText(
-			/Answer completed — confirmed by live questionnaire callback/,
-		),
-	).toBeVisible();
+	await expect(reader.getByText(/Submitted/)).toBeVisible();
 	await expect(
 		page.locator('form[aria-label="Pending questionnaire"]'),
 	).toHaveCount(0);
@@ -1578,9 +1562,7 @@ test("C4 questionnaire full safe content, free/multi/notes/cancel, reader/takeov
 		"字".repeat(8192),
 	);
 	await submitQuestionnaire(page);
-	await expect(
-		page.getByText(/Not sent — reply exceeds 65,536 bytes/),
-	).toBeVisible();
+	await expect(page.getByText(/Reply too large/)).toBeVisible();
 	expect(oversizedPosts).toEqual([]);
 	const freshGeneration = new URLSearchParams(new URL(page.url()).hash.slice(1))
 		.get("session")!
@@ -1615,7 +1597,7 @@ test("C4 questionnaire invalid correction, immutable uncertain repeat versus edi
 	await state("invalid");
 	await selectQuestionOption(page, "Exact B");
 	await submitQuestionnaire(page);
-	await expect(page.getByText(/Invalid reply — correct/)).toBeVisible();
+	await expect(page.getByText(/Invalid answer/)).toBeVisible();
 	await expect(
 		page.locator('form[aria-label="Pending questionnaire"]'),
 	).toHaveCount(1);
@@ -1660,7 +1642,7 @@ test("C4 questionnaire invalid correction, immutable uncertain repeat versus edi
 		.getByRole("button", { name: "Repeat original questionnaire reply" })
 		.click();
 	await expect(
-		page.getByText(/Uncertain — original completion unknown; repeat not sent/),
+		page.getByText(/Answer unconfirmed. Repeat not sent./),
 	).toBeVisible();
 	const beforeTakeover = (await (await state("accept")).json()).replies.length;
 	await sidebarClick(page, "Take over browser control");
@@ -1673,11 +1655,7 @@ test("C4 questionnaire invalid correction, immutable uncertain repeat versus edi
 	await page
 		.getByRole("button", { name: "Repeat original questionnaire reply" })
 		.click();
-	await expect(
-		page.getByText(
-			/Answer completed — confirmed by live questionnaire callback/,
-		),
-	).toBeVisible();
+	await expect(page.getByText(/Submitted/)).toBeVisible();
 	const replies = (await (await state("accept")).json()).replies;
 	expect(replies.at(-1).answers[0].answer).toBe("original immutable");
 	expect(replies.at(-1).replyId).not.toBe(replies.at(-2).replyId);
@@ -1747,20 +1725,14 @@ test("C4 questionnaire lost accepted response never infers browser win, cannot r
 		{ times: 1 },
 	);
 	await submitQuestionnaire(page);
-	await expect(
-		page.getByText(/Uncertain — response lost or authority changed/),
-	).toBeVisible();
+	await expect(page.getByText(/Answer unconfirmed/)).toBeVisible();
 	await expect(
 		page.locator('form[aria-label="Pending questionnaire"]'),
 	).toHaveCount(0);
 	await expect(
 		page.getByRole("button", { name: "Repeat original questionnaire reply" }),
 	).toBeDisabled();
-	expect(
-		await page
-			.getByText(/Answer completed — confirmed by live questionnaire callback/)
-			.count(),
-	).toBe(0);
+	expect(await page.getByText(/Submitted/).count()).toBe(0);
 	await state("new");
 	await expect(
 		page.locator('form[aria-label="Pending questionnaire"]'),
@@ -1838,14 +1810,8 @@ test("C4 questionnaire delayed accepted response after owner switch cannot estab
 	await ready;
 	await chooseSession(page, other.instance);
 	release();
-	await expect(
-		page.getByText(/Uncertain — response lost or authority changed/),
-	).toBeVisible();
-	expect(
-		await page
-			.getByText(/Answer completed — confirmed by live questionnaire callback/)
-			.count(),
-	).toBe(0);
+	await expect(page.getByText(/Answer unconfirmed/)).toBeVisible();
+	expect(await page.getByText(/Submitted/).count()).toBe(0);
 	await chooseSession(page, owner.instance);
 	await expect(
 		page.getByRole("button", { name: "Repeat original questionnaire reply" }),
@@ -2142,9 +2108,7 @@ for (const width of [320, 390])
 		);
 		await submitQuestionnaire(page);
 		await expect(pending).toHaveCount(0);
-		await expect(
-			page.getByText(/Uncertain — response lost or authority changed/),
-		).toBeVisible();
+		await expect(page.getByText(/Answer unconfirmed/)).toBeVisible();
 		await expect(
 			page.getByRole("region", { name: "Supported questionnaires" }),
 		).toBeVisible();
@@ -2159,7 +2123,7 @@ for (const width of [320, 390])
 		await context.request.post("/api/fixture/disconnect");
 		await expect(
 			page.getByLabel("Text for selected Pi (local draft)"),
-		).toHaveAccessibleDescription(/Disconnected — cached content is read-only/);
+		).toHaveAccessibleDescription(/Disconnected/);
 		await expect(article).toContainText("Owner B");
 		await expect(
 			page.getByRole("button", { name: /^Open sessions:/ }),
@@ -3152,7 +3116,7 @@ test("I2 busy text lost response retains original mode/id/text with explicit ded
 		page.on("request", listener);
 		const draft = page.getByLabel("Text for selected Pi (local draft)");
 		await expect(draft).toHaveAccessibleDescription(
-			/Pi is busy — choose Steer or Follow-up/,
+			/Choose Steer or Follow-up/,
 		);
 		await draft.fill(`original ${mode}`);
 		await page.route(
@@ -3177,14 +3141,13 @@ test("I2 busy text lost response retains original mode/id/text with explicit ded
 		await context.request.post("/api/fixture/break-transport");
 		await expect(
 			page.getByLabel("Text for selected Pi (local draft)"),
-		).toHaveAccessibleDescription(/Disconnected — cached content is read-only/);
+		).toHaveAccessibleDescription(/Disconnected/);
 		await expect(
 			page
 				.locator(".composer")
-				.getByText(
-					"Input outcome unknown — original retained; no automatic retry.",
-					{ exact: true },
-				),
+				.getByText("Delivery unknown. Check Pi before retrying.", {
+					exact: true,
+				}),
 		).toBeVisible({ timeout: 15000 });
 		expect(requests).toHaveLength(1);
 		await state("idle");
@@ -3320,14 +3283,12 @@ test("I2 busy text delayed acquisition captures mode, allows Pi settling and nev
 			await expect(draft).toHaveValue("new local draft");
 		} else {
 			await expect(
-				page.getByText("Action in progress — please wait; drafts stay local.", {
+				page.getByText("Please wait", {
 					exact: true,
 				}),
 			).toHaveCount(0);
 			await chooseSession(page, owner.instance);
-			await expect(
-				page.getByText("Not sent — control unavailable", { exact: true }),
-			).toBeVisible();
+			await expect(page.getByText("Not sent", { exact: true })).toBeVisible();
 			expect(requests).toEqual([]);
 		}
 		expect(
@@ -3340,7 +3301,7 @@ test("I2 busy text delayed acquisition captures mode, allows Pi settling and nev
 	questionCookies = await context.cookies();
 });
 
-test("I2 busy text older or unavailable bridges fail closed with owning Pi full-restart guidance", async ({
+test("I2 busy text older or unavailable bridges fail closed with owning Pi restart guidance", async ({
 	page,
 	context,
 }, testInfo) => {
@@ -3427,9 +3388,7 @@ test("I2 busy text older or unavailable bridges fail closed with owning Pi full-
 			.fill("local only");
 		await expect(
 			page.getByLabel("Text for selected Pi (local draft)"),
-		).toHaveAccessibleDescription(
-			"Busy text unavailable — fully restart the owning Pi to load the updated bridge.",
-		);
+		).toHaveAccessibleDescription("Busy text unavailable. Restart Pi.");
 
 		await expect(
 			page.getByRole("button", { name: /^(Send|Steer)$/, exact: true }),
@@ -3467,10 +3426,9 @@ test("I2 busy text older or unavailable bridges fail closed with owning Pi full-
 				(await composer.locator(".composer-bar").boundingBox())!.height,
 			).toBeLessThanOrEqual(74);
 			await expect(
-				composer.getByText(
-					"Busy text unavailable — fully restart the owning Pi to load the updated bridge.",
-					{ exact: true },
-				),
+				composer.getByText("Busy text unavailable. Restart Pi.", {
+					exact: true,
+				}),
 			).toBeVisible();
 			for (const button of await composer.locator("button:visible").all()) {
 				const box = (await button.boundingBox())!;
@@ -3680,11 +3638,7 @@ test("C4 action acquisition captures image/text and questionnaire payloads, seri
 		"edited not submitted",
 	);
 	releaseReply();
-	await expect(
-		page.getByText(
-			/Answer completed — confirmed by live questionnaire callback/,
-		),
-	).toBeVisible();
+	await expect(page.getByText(/Submitted/)).toBeVisible();
 	expect(replies).toHaveLength(1);
 	expect(replies[0].cancelled).toBe(true);
 	expect(replies[0].answers).toEqual([
@@ -3805,7 +3759,7 @@ for (const loss of ["claim", "confirmation"])
 					})
 					.click();
 			await expect(
-				page.getByText(/Control response lost — read-only/),
+				page.getByText(/Control unconfirmed. Read-only./),
 			).toBeVisible();
 			if (action === "Send" || action === "image")
 				await expect(
@@ -3828,7 +3782,7 @@ for (const loss of ["claim", "confirmation"])
 						exact: true,
 					}),
 				).toHaveValue("retained answer");
-			expect(await page.getByText(/Uncertain — response lost/).count()).toBe(0);
+			expect(await page.getByText(/Rename uncertain/).count()).toBe(0);
 			await expect(
 				page.getByRole("button", { name: /Retry same|Repeat original/ }),
 			).toHaveCount(0);
@@ -3934,9 +3888,7 @@ test("C4 action acquisition delayed claim cannot redirect across selection/gener
 			await context.request.post("/api/fixture/disconnect");
 			await expect(
 				page.getByLabel("Text for selected Pi (local draft)"),
-			).toHaveAccessibleDescription(
-				/Disconnected — cached content is read-only/,
-			);
+			).toHaveAccessibleDescription(/Disconnected/);
 		}
 		if (change === "busy") {
 			await stop("work");
@@ -4046,7 +3998,7 @@ test("C4 action acquisition lease expiry and failed original reclaim preserve un
 		.getByRole("button", { name: "Retry same outstanding input" })
 		.click();
 	await expect(
-		page.getByText(/Uncertain — original outcome unknown; retry not sent/),
+		page.getByText(/Outcome unknown. Retry not sent./),
 	).toBeVisible();
 	expect(sent).toHaveLength(1);
 	await expectTakeoverAvailable(page);
@@ -4131,9 +4083,7 @@ test("C4 Stop action acquisition delayed claim rechecks original owner and eligi
 			await expect(page.getByText(/Stop: Not sent/)).toHaveCount(0);
 			await chooseSession(page, owner.instance);
 		}
-		await expect(
-			page.getByText(/Stop: Not sent — control or parent activity changed/),
-		).toBeVisible();
+		await expect(page.getByText(/Stop: Not sent/)).toBeVisible();
 		expect(bodies).toEqual([]);
 		await expect(
 			page.getByRole("button", { name: "Retry same Stop request" }),
@@ -4418,12 +4368,12 @@ test("reload restores only the selected owner, reconciles replacement and never 
 	try {
 		await expect(
 			page.getByLabel("Text for selected Pi (local draft)"),
-		).toHaveAccessibleDescription(/Disconnected — cached content is read-only/);
+		).toHaveAccessibleDescription(/Disconnected/);
 		await page.reload();
 		await expectSelected(page, other.instance);
 		await expect(
 			page.getByLabel("Text for selected Pi (local draft)"),
-		).toHaveAccessibleDescription(/Disconnected — cached content is read-only/);
+		).toHaveAccessibleDescription(/Disconnected/);
 		await expect(
 			page.getByRole("button", {
 				name: /^(Send|Steer)$/,
@@ -4606,7 +4556,7 @@ for (const failure of ["503", "lost response"])
 				.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
 				.click();
 			await expect(
-				page.getByText(/Uncertain — response lost; no automatic retry/),
+				page.getByText(/Delivery unknown. Check Pi before retrying./),
 			).toBeVisible();
 			await page
 				.getByLabel("Text for selected Pi (local draft)")
@@ -4642,9 +4592,7 @@ for (const failure of ["503", "lost response"])
 			await page.getByRole("button", { name: "Forget this device" }).click();
 			await expect(
 				page.getByText(
-					failure === "503"
-						? /Forget unavailable — revocation not confirmed/
-						: /Forget response lost.*outcome unknown; revocation not confirmed/,
+					failure === "503" ? /Removal unconfirmed/ : /Removal unconfirmed/,
 				),
 			).toBeVisible();
 			await expect(
@@ -4670,7 +4618,7 @@ for (const failure of ["503", "lost response"])
 				page.getByLabel("Text for selected Pi (local draft)"),
 			).toHaveValue("separate unsent draft");
 			await expect(
-				page.getByText(/Uncertain — response lost; no automatic retry/),
+				page.getByText(/Delivery unknown. Check Pi before retrying./),
 			).toBeVisible();
 			await expect(
 				page.getByRole("button", { name: "Retry same outstanding input" }),
@@ -4805,7 +4753,7 @@ test("P3 default remembered device refresh and real gateway recreation recover s
 		await context.request.post("/api/fixture/restart");
 		await expect(
 			page.getByLabel("Text for selected Pi (local draft)"),
-		).toHaveAccessibleDescription(/Disconnected — cached content is read-only/);
+		).toHaveAccessibleDescription(/Disconnected/);
 		await expect
 			.poll(async () => {
 				try {
@@ -5072,7 +5020,7 @@ test("P3 real replaced/reused codes and safe invalid-expired-used-locked/status/
 						? "Pairing unavailable"
 						: status === 401
 							? "Code invalid"
-							: "outcome unknown",
+							: "Pairing unconfirmed",
 			);
 			await page.waitForTimeout(150);
 			expect(attempts).toBe(1);
@@ -5303,9 +5251,7 @@ test("Native rename retains uncertain original without resend, survives switchin
 		.getByLabel("Session name", { exact: true })
 		.fill("Uncertain original title");
 	await dialog.getByRole("button", { name: "Save", exact: true }).click();
-	await expect(
-		dialog.getByText(/Uncertain — response lost; original name retained/),
-	).toBeVisible();
+	await expect(dialog.getByText(/Rename uncertain/)).toBeVisible();
 	await expect(
 		dialog.getByRole("button", { name: "Save", exact: true }),
 	).toBeDisabled();
@@ -5315,7 +5261,7 @@ test("Native rename retains uncertain original without resend, survives switchin
 	await expect(
 		dialog.getByRole("button", { name: "Rename session", exact: true }),
 	).toBeDisabled();
-	await expect(dialog.getByText(/Uncertain — response lost/)).toBeHidden();
+	await expect(dialog.getByText(/Rename uncertain/)).toBeHidden();
 	await chooseSession(page, owner.instance);
 	await page.getByRole("button", { name: /^Open sessions:/ }).click();
 	await dialog
@@ -5335,10 +5281,10 @@ test("Native rename retains uncertain original without resend, survives switchin
 	await context.request.post("/api/fixture/break-transport");
 	await expect(
 		page.getByLabel("Text for selected Pi (local draft)"),
-	).toHaveAccessibleDescription(/Disconnected — cached content is read-only/);
+	).toHaveAccessibleDescription(/Disconnected/);
 	await expect(
 		page.getByLabel("Text for selected Pi (local draft)"),
-	).toHaveAccessibleDescription("Stopping — draft only until Pi is idle.", {
+	).toHaveAccessibleDescription("Stopping", {
 		timeout: 15000,
 	});
 	expect(posts).toBe(1);
@@ -5437,9 +5383,7 @@ test("Native rename preparation cannot redirect after session switch or control 
 	).toBeVisible();
 	await chooseSession(page, owner.instance);
 	await page.getByRole("button", { name: /^Open sessions:/ }).click();
-	await expect(
-		dialog.getByText("Not sent — control or session changed", { exact: true }),
-	).toBeVisible();
+	await expect(dialog.getByText("Not sent", { exact: true })).toBeVisible();
 	expect(posts).toBe(0);
 	await dialog
 		.getByRole("button", { name: "Rename session", exact: true })
@@ -5478,9 +5422,7 @@ test("Native rename preparation cannot redirect after session switch or control 
 	});
 	expect(takeover.ok()).toBe(true);
 	releaseRace();
-	await expect(
-		dialog.getByText("Not sent — control or session changed", { exact: true }),
-	).toBeVisible();
+	await expect(dialog.getByText("Not sent", { exact: true })).toBeVisible();
 	expect(posts).toBe(0);
 	await context.request.post("/api/fixture/rename-state", {
 		data: { action: "reset" },
@@ -5529,13 +5471,9 @@ test("Native rename disconnect invalidates captured preparation before forwardin
 	await dialog.getByRole("button", { name: "Save", exact: true }).click();
 	await ready;
 	await context.request.post("/api/fixture/break-transport");
-	await expect(
-		dialog.getByText("Disconnected — rename unavailable.", { exact: true }),
-	).toBeVisible();
+	await expect(dialog.getByText("Disconnected", { exact: true })).toBeVisible();
 	release();
-	await expect(
-		dialog.getByText("Not sent — control or session changed", { exact: true }),
-	).toBeVisible();
+	await expect(dialog.getByText("Not sent", { exact: true })).toBeVisible();
 	await expect(
 		dialog.getByRole("button", { name: "Rename session", exact: true }),
 	).toBeEnabled({ timeout: 15000 });
@@ -5603,9 +5541,7 @@ for (const cancellation of ["Cancel", "Escape"] as const) {
 		).toBeFocused();
 		await expectSelected(page, owner.instance);
 		release();
-		await expect(
-			dialog.getByText("Not sent — rename canceled", { exact: true }),
-		).toBeVisible();
+		await expect(dialog.getByText("Canceled", { exact: true })).toBeVisible();
 		await expect(
 			dialog.getByRole("button", { name: "Rename session", exact: true }),
 		).toBeEnabled();
@@ -5651,9 +5587,7 @@ test("Native rename replacement generation admits a new explicit name without re
 		.getByLabel("Session name", { exact: true })
 		.fill("Old generation uncertain name");
 	await dialog.getByRole("button", { name: "Save", exact: true }).click();
-	await expect(
-		dialog.getByText(/Uncertain — original name retained; no resend/),
-	).toBeVisible();
+	await expect(dialog.getByText(/Rename uncertain/)).toBeVisible();
 	await expect(
 		dialog.getByRole("button", { name: "Save", exact: true }),
 	).toBeDisabled();
@@ -5690,9 +5624,7 @@ test("Native rename replacement generation admits a new explicit name without re
 	await expect(dialog.getByLabel("Session name", { exact: true })).toHaveValue(
 		"Browser test",
 	);
-	await expect(
-		dialog.getByText(/Uncertain — original name retained/),
-	).toBeHidden();
+	await expect(dialog.getByText(/Rename uncertain/)).toBeHidden();
 	await dialog
 		.getByLabel("Session name", { exact: true })
 		.fill("Fresh generation explicit name");
@@ -5800,7 +5732,7 @@ test("Native rename uncertainty stays with capable owner A while B saves, and re
 	await expect(dialog.getByLabel("Session name", { exact: true })).toHaveValue(
 		"Browser other",
 	);
-	await expect(dialog.getByText(/Uncertain — response lost/)).toBeHidden();
+	await expect(dialog.getByText(/Rename uncertain/)).toBeHidden();
 	await dialog
 		.getByLabel("Session name", { exact: true })
 		.fill("Owner B explicit native name");
@@ -5827,9 +5759,7 @@ test("Native rename uncertainty stays with capable owner A while B saves, and re
 	await expect(dialog.getByLabel("Session name", { exact: true })).toHaveValue(
 		"Owner A unresolved original",
 	);
-	await expect(
-		dialog.getByText(/Uncertain — response lost; original name retained/),
-	).toBeVisible();
+	await expect(dialog.getByText(/Rename uncertain/)).toBeVisible();
 	await expect(
 		dialog.getByRole("button", { name: "Save", exact: true }),
 	).toBeDisabled();
@@ -5844,7 +5774,7 @@ test("Native rename uncertainty stays with capable owner A while B saves, and re
 	await expect(
 		dialog.getByRole("button", { name: "Save", exact: true }),
 	).toBeEnabled();
-	await expect(dialog.getByText(/Uncertain — response lost/)).toBeHidden();
+	await expect(dialog.getByText(/Rename uncertain/)).toBeHidden();
 	expect(
 		posts.map(({ instance, generation, name }) => ({
 			instance,

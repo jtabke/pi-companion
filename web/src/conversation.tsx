@@ -125,7 +125,7 @@ function CopyText({ text, kind }: { text: string; kind: "code" | "answer" }) {
 				{status === "copied"
 					? "Copied"
 					: status === "failed"
-						? `Copy failed — select ${kind} to copy.`
+						? "Copy failed"
 						: status === "copying"
 							? "Copying…"
 							: ""}

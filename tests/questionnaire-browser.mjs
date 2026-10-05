@@ -224,11 +224,7 @@ async function action(name) {
 			.click();
 		await page.getByLabel("Browser", { exact: true }).check();
 		await page.getByRole("button", { name: "Submit questionnaire" }).click();
-		await expect(
-			page.getByText(
-				/Answer completed — confirmed by live questionnaire callback/,
-			),
-		).toBeVisible();
+		await expect(page.getByText(/Submitted/)).toBeVisible();
 		await expect(
 			page.locator('form[aria-label="Pending questionnaire"]'),
 		).toHaveCount(0);

@@ -326,12 +326,7 @@ if (mode === "capture") {
 						await check(page, { ...a, snapshot: after.snapshot }, false),
 					);
 				} else {
-					await page
-						.getByText(
-							"Disconnected — cached content is read-only; drafts stay local.",
-							{ exact: true },
-						)
-						.waitFor();
+					await page.getByText("Disconnected", { exact: true }).waitFor();
 					await page
 						.getByRole("button", {
 							name: `Open sessions: ${b.snapshot.session} · ${b.snapshot.project}`,

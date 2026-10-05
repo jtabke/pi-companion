@@ -132,7 +132,7 @@ try {
 				{ times: 1 },
 			);
 			await page.getByRole("button", { name: "Stop", exact: true }).click();
-			await page.getByText(/Stop: Uncertain — response lost/).waitFor();
+			await page.getByText(/Stop: Outcome unknown/).waitFor();
 			for (
 				let i = 0;
 				i < 200 && !records().some((r) => r.type === "settled");
@@ -158,7 +158,7 @@ try {
 			await page
 				.getByRole("button", { name: "Retry same Stop request" })
 				.click();
-			await page.getByText(/Stop: Forwarded; completion unconfirmed/).waitFor();
+			await page.getByText(/Stop: Pending/).waitFor();
 			if (bodies.length !== 2 || bodies[0].requestId !== bodies[1].requestId)
 				throw Error("Stop identity changed");
 			if (
@@ -289,7 +289,7 @@ try {
 			);
 			await page.getByRole("button", { name: "Send", exact: true }).click();
 			await page
-				.getByText(/Uncertain — response lost; no automatic retry/)
+				.getByText(/Delivery unknown. Check Pi before retrying./)
 				.waitFor();
 			for (
 				let i = 0;
@@ -311,7 +311,7 @@ try {
 			await page
 				.getByRole("button", { name: "Retry same outstanding input" })
 				.click();
-			await page.getByText(/Forwarded; completion unconfirmed/).waitFor();
+			await page.getByText(/Pending/).waitFor();
 			if (
 				bodies.length !== 2 ||
 				bodies[0].requestId !== bodies[1].requestId ||

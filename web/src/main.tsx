@@ -363,12 +363,9 @@ function App() {
 								aria-label="Rename selected session"
 							>
 								{!reachable ? (
-									<p>Disconnected — rename unavailable.</p>
+									<p>Disconnected</p>
 								) : selectedSummary?.rename !== true ? (
-									<p>
-										Rename unavailable — fully restart the owning Pi to load the
-										updated bridge.
-									</p>
+									<p>Rename unavailable. Restart Pi.</p>
 								) : null}
 								{renameEditor?.editing && (
 									<form
