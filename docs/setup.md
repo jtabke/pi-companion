@@ -182,9 +182,35 @@ Revocation does not cancel native work already dispatched.
 
 ## Install on your phone
 
-- **iPhone:** open the HTTPS address in Safari, then **Share → Add to Home Screen**.
-- **Other browsers:** use **Install app** or **Add to Home Screen**, when available.
-- The drawer also offers **Device access → Install on this device** outside standalone mode.
+Save Companion as a progressive web app (PWA) for an app-style launch from your home
+screen. Keep Tailscale connected and the Companion gateway running on your computer.
+
+### iOS (Safari)
+
+1. Open your Companion HTTPS address in **Safari**.
+2. Tap **Share** (or **… → Share**, depending on the Safari layout).
+3. Choose **Add to Home Screen**. If missing, use **Edit Actions** in the share sheet
+   to add it.
+4. Enable **Open as Web App** if shown, then tap **Add**.
+5. Open the new **Pi Companion** icon from your home screen.
+
+### Android (Chrome)
+
+1. Open your Companion HTTPS address in **Chrome**.
+2. Tap **⋮** beside the address bar.
+3. Choose **Install and create shortcut → Install**. Depending on the Chrome version,
+   the menu may instead say **Install app** or **Add to Home screen**; choose the web-app
+   installation option when offered and confirm the prompt.
+4. Open **Pi Companion** from your home screen or app drawer. If only a shortcut is
+   offered, it may open in a browser tab rather than a standalone app.
+
+Other browsers may offer similar installation menus. Companion also shows guidance
+under **Device access → Install on this device** when not already in standalone mode.
+See the official [iOS](https://support.apple.com/guide/iphone/iphea86e5236/ios) and
+[Android](https://support.google.com/chrome/answer/9658361?co=GENIE.Platform%3DAndroid&hl=en)
+instructions for browser-specific details.
+
+### Access and offline behavior
 
 If the installed app asks for pairing, pair that browsing context explicitly; do not
 assume Safari's access transferred. Installation grants no access, takes no control
@@ -197,8 +223,8 @@ Nothing queues or replays when connectivity returns. An uncertain request may al
 have reached Pi. Worker updates wait for old windows to close rather than forcing reload.
 If offline setup fails, online access remains available.
 
-Actual iPhone installation, standalone cookies, keyboard behavior and VoiceOver
-remain owner-operated checks; browser fixtures do not establish these claims.
+Physical iOS/Android installation and standalone access remain owner-operated checks;
+browser fixtures do not establish those claims or actual-phone keyboard/accessibility behavior.
 
 ## Manual local HTTP mode
 
