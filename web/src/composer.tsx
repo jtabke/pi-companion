@@ -1,4 +1,5 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
+import { ImagePreview } from "./image-preview.js";
 import type { Identity, TextRequest } from "../../src/shared/protocol.js";
 import type { useBrowserSession } from "./use-browser-session.js";
 
@@ -312,9 +313,11 @@ export function Composer({
 								{attachment.map((file, index) => (
 									<div className="attachment" key={index}>
 										{preview[index] && (
-											<img
+											<ImagePreview
 												src={preview[index]}
 												alt="Local attachment preview"
+												label={`Enlarge attachment ${index + 1}: ${file.name}`}
+												className="attachment-preview"
 											/>
 										)}
 										<span className="visually-hidden">

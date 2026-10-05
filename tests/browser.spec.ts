@@ -995,6 +995,32 @@ for (const width of [320, 390])
 				)
 				.toBe(1);
 			const firstUrl = await previews.first().getAttribute("src");
+			for (const index of [0, 1]) {
+				const thumbnail = page.getByRole("button", {
+					name: `Enlarge attachment ${index + 1}: ${index === 0 ? "first.png" : "second.jpg"}`,
+					exact: true,
+				});
+				await expect(thumbnail).toBeEnabled();
+				expect((await thumbnail.boundingBox())!.width).toBe(44);
+				expect((await thumbnail.boundingBox())!.height).toBe(44);
+				const src = await previews.nth(index).getAttribute("src");
+				await thumbnail.focus();
+				await page.keyboard.press("Enter");
+				await expect(page.locator(".pswp--open")).toBeVisible();
+				await expect(page.locator(".pswp__img").first()).toHaveAttribute(
+					"src",
+					src!,
+				);
+				await expect(page.locator(".pswp__img").first()).toBeVisible();
+				if (index === 0) await page.keyboard.press("Escape");
+				else await page.getByRole("button", { name: /Close/ }).click();
+				await expect(page.locator(".pswp--open")).toHaveCount(0);
+				await expect(thumbnail).toBeFocused();
+				await expect(draft).toHaveValue("local text");
+				await expect(previews).toHaveCount(2);
+				await expect(remove).toHaveCount(2);
+				expect(mutations).toEqual([]);
+			}
 			expect(await paste({ ...first, name: "third.png" })).toBe(false);
 			expect(await paste({ ...first, name: "fourth.png" })).toBe(false);
 			await expect(remove).toHaveCount(4);

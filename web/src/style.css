@@ -847,6 +847,11 @@ summary {
 	padding: 0;
 	font-size: 1.5rem;
 }
+.attachment .attachment-preview {
+	background: transparent;
+	border: 0;
+	border-radius: 8px;
+}
 .questions form {
 	padding: 8px;
 	margin-bottom: 12px;

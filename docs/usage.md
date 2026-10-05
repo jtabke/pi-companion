@@ -62,7 +62,10 @@ Uncertain input uses one outcome receipt with Details and explicit Retry;
 a simultaneous browser-control blocker remains separate. Notices scroll within a bounded
 area rather than pushing the editor offscreen.
 Picking multiple images or pasting repeatedly appends local thumbnails in a horizontal
-row above the editor; each image can be removed before sending. Short keyboard layouts
+row above the editor; each image can be removed before sending. Tap a thumbnail, or
+focus it and press Enter, to inspect and zoom the local image before sending. Close or
+Escape returns focus to that thumbnail without changing the draft or attachments.
+Previewing never uploads an image, sends input or acquires control. Short keyboard layouts
 retain readable notices and complete touch targets without covering the delivery selector. Jump to latest is a floating circle centered above the composer, not a separate
 row or full-width overlay. Pressing Jump to latest keeps the editor focused so keyboard
 closure cannot move the button before release; the click scrolls to the newest content.

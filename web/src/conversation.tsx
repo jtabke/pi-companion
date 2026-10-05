@@ -1,8 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState } from "react";
 import Markdown, { type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import PhotoSwipe from "photoswipe";
-import "photoswipe/style.css";
+import { ImagePreview } from "./image-preview.js";
 import type { Block, Snapshot } from "../../src/shared/protocol.js";
 import { CodeText, DiffText } from "./code.js";
 
@@ -15,66 +14,16 @@ function NativeImage({
 	snapshot: Snapshot;
 	imageNumber: number;
 }) {
-	const [failed, setFailed] = useState(false);
-	const viewer = useRef<PhotoSwipe | null>(null);
-	const button = useRef<HTMLButtonElement>(null);
-	const src = `/api/media/${snapshot.instance}/${snapshot.generation}/${block.ref}`;
-	const label = `Native Pi image ${imageNumber}`;
-	useEffect(
-		() => () => {
-			viewer.current?.destroy();
-		},
-		[],
-	);
-	function enlarge() {
-		const pswp = new PhotoSwipe({
-			dataSource: [
-				{
-					src,
-					width: block.width,
-					height: block.height,
-					alt: `${label} enlarged`,
-				},
-			],
-			index: 0,
-			// Fit the viewing area even for small native screenshots; PhotoSwipe's default caps at 1:1.
-			initialZoomLevel: (level) =>
-				level.panAreaSize
-					? Math.min(
-							level.panAreaSize.x / block.width,
-							level.panAreaSize.y / block.height,
-						)
-					: level.fit,
-			showHideAnimationType: "none",
-			loop: false,
-			// Restore keyboard focus without moving the conversation reader.
-			returnFocus: false,
-		});
-		viewer.current = pswp;
-		pswp.on("destroy", () => {
-			viewer.current = null;
-			button.current?.focus({ preventScroll: true });
-		});
-		pswp.init();
-	}
-	return failed ? (
-		<p role="status">{label} unavailable</p>
-	) : (
-		<button
-			ref={button}
+	return (
+		<ImagePreview
+			src={`/api/media/${snapshot.instance}/${snapshot.generation}/${block.ref}`}
+			width={block.width}
+			height={block.height}
+			alt={`Native Pi image ${imageNumber}`}
+			label={`Enlarge native Pi image ${imageNumber}`}
 			className="image"
-			onClick={enlarge}
-			aria-label={`Enlarge native Pi image ${imageNumber}`}
-		>
-			<img
-				src={src}
-				width={block.width}
-				height={block.height}
-				alt={label}
-				onError={() => setFailed(true)}
-				loading="lazy"
-			/>
-		</button>
+			loading="lazy"
+		/>
 	);
 }
 function CopyText({ text, kind }: { text: string; kind: "code" | "answer" }) {
