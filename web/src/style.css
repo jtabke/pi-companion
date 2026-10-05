@@ -658,19 +658,6 @@ summary {
 	border-radius: 20px;
 	background: var(--surface);
 }
-.composer-drawer-handle {
-	display: none;
-	flex-shrink: 0;
-	width: 44px;
-	height: 44px;
-	padding: 0;
-	border: 0;
-	border-radius: 12px;
-	background: transparent;
-	color: var(--muted);
-	/* Only this non-editing surface reserves horizontal movement for the drawer. */
-	touch-action: pan-y pinch-zoom;
-}
 .composer textarea {
 	flex: 1 1 0;
 	min-width: 0;
@@ -1595,26 +1582,15 @@ pre:focus-visible,
 
 /* Give a real draft reading width, rather than squeezing it between actions. */
 @media (max-width: 639px) {
-	.composer-drawer-handle {
-		display: grid;
-		place-items: center;
-	}
 	.composer-bar:is([data-expanded="true"], [data-busy="true"]) {
 		display: grid;
 		grid-template-columns: 44px 1fr auto auto;
 		gap: 4px;
 	}
-	.composer-bar:is([data-expanded="true"], [data-busy="true"])
-		.composer-drawer-handle {
-		position: absolute;
-		left: 4px;
-		top: 4px;
-	}
 	.composer-bar:is([data-expanded="true"], [data-busy="true"]) textarea {
 		grid-column: 1 / -1;
 		grid-row: 1;
 		width: 100%;
-		padding-left: 56px;
 	}
 	.composer-bar:is([data-expanded="true"], [data-busy="true"])
 		.attachment-picker {
@@ -1666,10 +1642,6 @@ pre:focus-visible,
 		.composer-bar:is([data-expanded="true"], [data-busy="true"]) {
 			padding-block: 0;
 			row-gap: 0;
-		}
-		.composer-bar:is([data-expanded="true"], [data-busy="true"])
-			.composer-drawer-handle {
-			top: 0;
 		}
 	}
 	.composer textarea {

@@ -741,7 +741,6 @@ function App() {
 				draftInput={draftInput}
 				observedQuestions={observedQuestions}
 				onReviewQuestions={() => setQuestionReview((value) => value + 1)}
-				onOpenSessions={openSessions}
 			/>
 		</main>
 	);

@@ -136,7 +136,6 @@ export function useSessionDrawer(paired: boolean) {
 			const closing = !!sidebar.current?.open;
 			const control = target?.closest("button, a, summary");
 			const targetDialog = target?.closest("dialog");
-			const composerHandle = !!target?.closest(".composer-drawer-handle");
 			const sessionTarget = control?.matches(
 				".session-card > button:not(.rename-session), .session-details > summary",
 			);
@@ -146,11 +145,10 @@ export function useSessionDrawer(paired: boolean) {
 				event.touches.length !== 1 ||
 				!target ||
 				(targetDialog && targetDialog !== sidebar.current) ||
-				(control && !composerHandle && !(closing && sessionTarget)) ||
-				(!composerHandle &&
-					target.closest(
-						"input, textarea, select, label, [contenteditable]:not([contenteditable=false]), pre, code, table, .image, .composer, .questions",
-					)) ||
+				(control && !(closing && sessionTarget)) ||
+				target.closest(
+					"input, textarea, select, label, [contenteditable]:not([contenteditable=false]), pre, code, table, .image, .composer, .questions",
+				) ||
 				window.getSelection()?.isCollapsed === false
 			)
 				return;
@@ -167,8 +165,7 @@ export function useSessionDrawer(paired: boolean) {
 				)
 					return;
 			} else {
-				if (!composerHandle && (touch.clientX < 0 || touch.clientX > 44))
-					return;
+				if (touch.clientX < 0 || touch.clientX > 44) return;
 				// Leave independently horizontally scrollable content to the browser.
 				for (
 					let content: Element | null = target;

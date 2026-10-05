@@ -412,6 +412,12 @@ for (const width of [320, 390, 900]) {
 		{
 			const draft = page.getByPlaceholder("Message Pi");
 			const bar = page.locator(".composer-bar");
+			await expect(
+				composer.getByRole("button", {
+					name: "Open sessions from editor",
+					exact: true,
+				}),
+			).toHaveCount(0);
 			const picker = page.locator(".attachment-picker");
 			const send = composer.getByRole("button", {
 				name: /^(Send|Steer)$/,
@@ -513,7 +519,6 @@ for (const width of [320, 390, 900]) {
 					editor: (await draft.boundingBox())!,
 					picker: (await picker.boundingBox())!,
 					send: (await send.boundingBox())!,
-					handle: await bar.locator(".composer-drawer-handle").boundingBox(),
 					textLeft: await draft.evaluate(
 						(node) =>
 							node.getBoundingClientRect().x +
@@ -569,16 +574,9 @@ for (const width of [320, 390, 900]) {
 						boxes.picker.y + boxes.picker.height,
 					);
 				}
-				expect(boxes.picker.x - boxes.bar.x).toBe(
-					width < 640 && !stacked ? 53 : 5,
-				);
-				if (width < 640) {
-					expect(boxes.handle).not.toBeNull();
-					expect(boxes.handle!.x - boxes.bar.x).toBe(5);
-					expect(boxes.textLeft).toBeGreaterThanOrEqual(
-						boxes.handle!.x + boxes.handle!.width + 4,
-					);
-				} else expect(boxes.handle).toBeNull();
+				expect(boxes.picker.x - boxes.bar.x).toBe(5);
+				expect(boxes.textLeft).toBe(boxes.editor.x + 8);
+				if (!stacked) expect(boxes.editor.width).toBe(boxes.bar.width - 106);
 				expect(
 					boxes.bar.x + boxes.bar.width - boxes.send.x - boxes.send.width,
 				).toBe(5);
@@ -595,11 +593,7 @@ for (const width of [320, 390, 900]) {
 				expect(boxes.bar.y + boxes.bar.height).toBe(
 					states[0].bar.y + states[0].bar.height,
 				);
-				for (const control of [
-					boxes.picker,
-					boxes.send,
-					...(boxes.handle ? [boxes.handle] : []),
-				]) {
+				for (const control of [boxes.picker, boxes.send]) {
 					expect(control.width).toBeGreaterThanOrEqual(44);
 					expect(control.height).toBeGreaterThanOrEqual(44);
 					expect(control.y + control.height).toBeLessThanOrEqual(
@@ -3236,38 +3230,21 @@ for (const reducedMotion of ["no-preference", "reduce"] as const)
 					event.target instanceof Node &&
 					(event.target === dialog ||
 						(!dialog.contains(event.target) &&
-							!node.querySelector("header button")!.contains(event.target) &&
-							!node
-								.querySelector(".composer-drawer-handle")!
-								.contains(event.target)))
+							!node.querySelector("header button")!.contains(event.target)))
 				)
 					node.dataset.backdropClicks = String(
 						Number(node.dataset.backdropClicks) + 1,
 					);
 			});
 		});
-		const handle = page.getByRole("button", {
-			name: "Open sessions from editor",
-		});
-		await expect(handle).toBeVisible();
-		const handleBox = (await handle.boundingBox())!;
-		expect(handleBox.width).toBeGreaterThanOrEqual(44);
-		expect(handleBox.height).toBeGreaterThanOrEqual(44);
-		const textLeft = await page
-			.getByPlaceholder("Message Pi")
-			.evaluate(
-				(node) =>
-					node.getBoundingClientRect().x +
-					parseFloat(getComputedStyle(node).paddingLeft),
-			);
-		expect(textLeft).toBeGreaterThanOrEqual(handleBox.x + handleBox.width + 4);
-		const hx = handleBox.x + handleBox.width / 2,
-			hy = handleBox.y + handleBox.height / 2;
+		const edge = page.locator("main");
+		const hx = 8,
+			hy = 180;
 		async function drag(
 			type: string,
 			x: number,
 			time: number,
-			target = handle,
+			target = edge,
 			y = hy,
 		) {
 			await target.evaluate(
@@ -3346,7 +3323,7 @@ for (const reducedMotion of ["no-preference", "reduce"] as const)
 		await expect(page.getByPlaceholder("Message Pi")).toHaveValue(
 			"Unsent local draft",
 		);
-		await handle.click(); // The dedicated edge is also an ordinary keyboard/tap button.
+		await menu.click(); // The existing header remains the explicit drawer button.
 		await finish();
 		// Native dialog backdrop events target the dialog, so coordinates own dismissal.
 		for (const sequence of [
@@ -3394,6 +3371,7 @@ for (const reducedMotion of ["no-preference", "reduce"] as const)
 		}
 		await page.keyboard.press("Escape");
 		await expect(sidebar).toBeHidden();
+		await expect(sidebar).not.toHaveAttribute("open");
 		if (testInfo.project.name === "chromium") {
 			const input = await page.context().newCDPSession(page);
 			await input.send("Emulation.setTouchEmulationEnabled", { enabled: true });
@@ -6439,9 +6417,9 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					),
 				};
 			});
-			if (width === 390 && parent === "idle") {
+			if (parent === "idle" || (width === 390 && stopping)) {
 				expect(surface.height - editor.height).toBe(10);
-				expect(editor.width).toBe(surface.width - 154);
+				expect(editor.width).toBe(surface.width - (stopping ? 156 : 106));
 				expect(editor.x + editor.width).toBeLessThanOrEqual(sendBox.x);
 			} else {
 				expect(surface.height - editor.height).toBe(58);
@@ -6535,11 +6513,7 @@ test("composer focus is coherent across pointer and keyboard editing", async ({
 					const sendBox = (await send.boundingBox())!;
 					const editor = (await draft.boundingBox())!;
 					const surface = (await bar.boundingBox())!;
-					if (
-						text.includes("\n") ||
-						(parent === "working" && !stopping) ||
-						(stopping && width === 320 && !!text)
-					) {
+					if (text.includes("\n") || (parent === "working" && !stopping)) {
 						expect(editor.width).toBe(surface.width - 10);
 						expect(editor.y + editor.height).toBeLessThanOrEqual(sendBox.y);
 					} else expect(editor.x + editor.width).toBeLessThanOrEqual(sendBox.x);

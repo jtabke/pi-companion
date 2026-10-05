@@ -7,7 +7,6 @@ type ComposerProps = {
 	draftInput: React.RefObject<HTMLTextAreaElement | null>;
 	observedQuestions: number;
 	onReviewQuestions: () => void;
-	onOpenSessions: () => void;
 };
 
 export function ActionReceipt({
@@ -59,7 +58,6 @@ export function Composer({
 	draftInput,
 	observedQuestions,
 	onReviewQuestions,
-	onOpenSessions,
 }: ComposerProps) {
 	const {
 		paired,
@@ -407,36 +405,6 @@ export function Composer({
 						</div>
 					)}
 					<div className="composer-bar" data-busy={showBusyMode}>
-						<button
-							type="button"
-							className="composer-drawer-handle"
-							aria-label="Open sessions from editor"
-							aria-haspopup="dialog"
-							title="Tap or swipe right to open sessions"
-							onMouseDown={(event) => {
-								if (
-									event.button === 0 &&
-									document.activeElement === draftInput.current
-								)
-									event.preventDefault();
-							}}
-							onClick={onOpenSessions}
-						>
-							<svg
-								aria-hidden="true"
-								width="20"
-								height="20"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								strokeWidth="2"
-								strokeLinecap="round"
-								strokeLinejoin="round"
-							>
-								<rect x="3" y="4" width="18" height="16" rx="2" />
-								<path d="M9 4v16" />
-							</svg>
-						</button>
 						<div className="attachment-picker">
 							<label htmlFor="attachment">
 								<span aria-hidden="true">+</span>

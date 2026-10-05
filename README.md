@@ -17,7 +17,7 @@ replacement for Pi's terminal, tools, extensions or conversation storage.
   Status dots and labels show observed activity and questions needing answers. The drawer shows the selected session's
   model and rename pencil in its session row. The top shows only the live-terminal count.
   A separate compact footer keeps Leave session, browser control and Device access visible.
-  On narrow screens, drag from the left edge or the editor's sessions handle to open
+  On narrow screens, drag from the left edge to open
   the drawer, then drag left inside it to close. The drawer and backdrop follow your finger;
   release speed sets the remaining animation duration. Reduced motion removes the settling animation.
 - **Image inspection:** tap native tool-returned images to enlarge/zoom them, without an
@@ -93,10 +93,9 @@ Update the sample scenario in the script when the illustrated journey changes.
 ## Browser input
 
 The composer starts with +, text and Send on one compact row inside a rounded
-surface. Screens narrower than 640px also show a 44px sessions handle: tap it or drag
-right to open the drawer without swiping inside editable text. Short drafts use all the
-available editor width on that compact row. Once text wraps or contains a newline, the
-editor gets a full-width row above the actions, with leading space reserved for that handle.
+surface. Use the header button to open sessions; the editor has no duplicate sessions button.
+Short drafts use all the available editor width on that compact row. Once text wraps or
+contains a newline, the editor gets a full-width row above the actions.
 Shortening the draft to fit restores the compact row. An available busy-mode selector
 keeps the editor above the actions. Text grows upward
 as it wraps and scrolls natively after a height cap. CSS owns the shell layout, with the
@@ -505,7 +504,7 @@ choose the terminal by its name and working-directory group. Session rows show n
 and activity, with a quiet full-row selected highlight. Per-session diagnostic IDs and
 Details disclosures are not shown; action receipts retain their required safety details.
 On narrow touch screens, swipe right from
-within 44px of the left edge, or from the editor's sessions handle, to open the same drawer.
+within 44px of the left edge outside the editor to open the same drawer.
 A small diagonal start remains undecided until movement is clearly horizontal or vertical.
 After the gesture is claimed, the drawer follows horizontal movement and the backdrop
 follows its visible fraction. A 64px swipe still completes opening or closing; short,
