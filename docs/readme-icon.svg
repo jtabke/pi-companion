@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#292929"/>
+      <stop offset="0.5" stop-color="#171717"/>
+      <stop offset="1" stop-color="#090909"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#626262"/>
+      <stop offset="0.3" stop-color="#303030"/>
+      <stop offset="1" stop-color="#383838"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="0.18" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- README presentation only. Keep the installed app icons separate. -->
+  <rect x="40" y="40" width="432" height="432" rx="112" fill="url(#tile)" stroke="url(#rim)" stroke-width="3"/>
+  <rect x="43" y="43" width="426" height="426" rx="109" fill="url(#shine)"/>
+  <path fill="#e48a7a" d="M128 128H320V256H256V192H128Z"/>
+  <path fill="#4f8eb3" d="M128 192H192V256H256V320H192V384H128Z"/>
+  <path fill="#eab65d" d="M320 256H384V384H320Z"/>
+  <path d="M129 129H319M129 193V383M321 257H383" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="2"/>
+</svg>

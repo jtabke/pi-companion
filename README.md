@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/icon-512.png" width="128" height="128" alt="Pi logo" />
+  <img src="docs/readme-icon.svg" width="128" height="128" alt="Pi Companion app icon" />
 </p>
 
 <h1 align="center">Pi Companion</h1>
