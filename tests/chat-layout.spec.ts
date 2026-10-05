@@ -53,90 +53,174 @@ async function renderSnapshots(
 	);
 }
 
+function chatRenderingFixture() {
+	const identity = { instance: "a".repeat(32), generation: "b".repeat(32) };
+	const summary = {
+		...identity,
+		project: "Pi Companion",
+		cwd: "/workspace/Pi Companion",
+		session: "Design session",
+		parent: "idle" as const,
+		background: "unobserved" as const,
+	};
+	const other = {
+		...summary,
+		instance: "c".repeat(32),
+		generation: "d".repeat(32),
+		project: "Other project",
+		session: "Design session",
+		parent: "working" as const,
+		pending: true,
+	};
+	const snapshot: Snapshot = {
+		...summary,
+		truncated: true,
+		omittedItems: 0,
+		items: [
+			{
+				id: "user",
+				role: "user",
+				blocks: [{ type: "text", text: "Make tools easier to read." }],
+			},
+			{
+				id: "call",
+				role: "assistant",
+				blocks: [{ type: "tool", text: "Tool call: functions.codemode" }],
+			},
+			{
+				id: "result",
+				role: "tool: functions.codemode",
+				blocks: [
+					{
+						type: "text",
+						text: Array.from(
+							{ length: 100 },
+							(_, index) => `line ${index}: ${"x".repeat(150)}`,
+						).join("\n"),
+						omittedChars: 17,
+					},
+					{ type: "text", text: "Second output segment" },
+					{
+						type: "unavailable",
+						text: "Image unavailable: invalid fixture image",
+					},
+				],
+			},
+			...Array.from({ length: 32 }, (_, index) => ({
+				id: `message-${index}`,
+				role: "assistant",
+				blocks: [
+					{
+						type: "text" as const,
+						text: `Message ${index}. Read earlier messages without losing your place.\n\nMore conversation content.`,
+					},
+				],
+			})),
+			{
+				id: "code",
+				role: "assistant",
+				blocks: [
+					{
+						type: "text",
+						text: "```typescript\nconst message = 'Hello Pi';\n```\n\nEnd of code example.",
+					},
+				],
+			},
+		],
+	};
+	const sessions = [summary, other];
+	return { sessions, snapshot };
+}
+
 // Rendering/scroll fixtures only: no Pi, model, lease, or remote service is used.
-for (const width of [320, 390, 900])
-	test(`chat scrolling, tool disclosure and session sidebar at ${width}px`, async ({
+for (const width of [320, 390, 900]) {
+	test(`native tool disclosure, shortening and output scrolling at ${width}px`, async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width, height: 844 });
+		await page.emulateMedia({ reducedMotion: "reduce" });
+		const { sessions, snapshot } = chatRenderingFixture();
+		await renderSnapshots(page, sessions, snapshot);
+		const mutations: string[] = [];
+		page.on("request", (request) => {
+			if (request.method() === "POST") mutations.push(request.url());
+		});
+		await page.goto("/");
+		await chooseSession(page, sessions[0].instance);
+		await page
+			.getByRole("region", { name: "Conversation history", exact: true })
+			.evaluate((node) => {
+				node.scrollTop = 0;
+			});
+		const imageError = page.getByText(
+			"Image unavailable: invalid fixture image",
+			{ exact: true },
+		);
+		await expect(imageError).toBeVisible();
+		expect(await imageError.locator("xpath=ancestor::details").count()).toBe(0);
+		const disclosure = page.locator(".tool-disclosure");
+		await expect(disclosure).toHaveCount(1);
+		await expect(disclosure.locator("summary")).toContainText("shortened");
+		await expect(disclosure.locator(".preview-note")).toBeHidden();
+		await expect(disclosure).not.toHaveAttribute("open");
+		await expect(disclosure.locator("pre").first()).toBeHidden();
+		await expect(page.locator(".tool-call")).toHaveText(
+			"Tool call: functions.codemode",
+		);
+		await expect(page.locator(".tool-call")).toHaveClass(/visually-hidden/);
+		await expect(page.locator('[data-native-item="call"]')).toHaveClass(
+			/visually-hidden/,
+		);
+		await expect(
+			page.locator('[data-native-item="result"] .message-role'),
+		).toHaveClass(/visually-hidden/);
+		await disclosure.locator("summary").click();
+		await expect(disclosure.locator("pre").first()).toBeVisible();
+		await expect(disclosure.locator("pre")).toHaveCount(2);
+		await expect(disclosure.locator(".preview-note")).toHaveText(
+			"Preview shortened · 17 characters omitted.",
+		);
+		expect(
+			await disclosure
+				.locator("pre")
+				.first()
+				.evaluate((node) => node.scrollHeight > node.clientHeight),
+		).toBe(true);
+		await expect(disclosure.locator("pre").first()).toContainText("line 99:");
+		if (width < 900) {
+			const horizontalScroll = await disclosure
+				.locator("pre")
+				.first()
+				.evaluate((node) => {
+					node.scrollLeft = 48;
+					return {
+						available: node.scrollWidth > node.clientWidth,
+						position: node.scrollLeft,
+					};
+				});
+			expect(horizontalScroll.available).toBe(true);
+			expect(horizontalScroll.position).toBeGreaterThan(0);
+		}
+		await disclosure.locator("summary").focus();
+		await page.keyboard.press("Space");
+		await expect(disclosure.locator("pre").first()).toBeHidden();
+		expect(
+			await page.evaluate(
+				() => document.documentElement.scrollWidth <= innerWidth,
+			),
+		).toBe(true);
+		expect(mutations).toEqual([]);
+	});
+
+	test(`chat scrolling, composer recovery and session sidebar at ${width}px`, async ({
 		page,
 		context,
 		browserName,
 	}, testInfo) => {
 		await page.setViewportSize({ width, height: 844 });
 		await page.emulateMedia({ reducedMotion: "reduce" });
-		const identity = { instance: "a".repeat(32), generation: "b".repeat(32) };
-		const summary = {
-			...identity,
-			project: "Pi Companion",
-			cwd: "/workspace/Pi Companion",
-			session: "Design session",
-			parent: "idle" as const,
-			background: "unobserved" as const,
-		};
-		const other = {
-			...summary,
-			instance: "c".repeat(32),
-			generation: "d".repeat(32),
-			project: "Other project",
-			session: "Design session",
-			parent: "working" as const,
-			pending: true,
-		};
-		const snapshot: Snapshot = {
-			...summary,
-			truncated: true,
-			omittedItems: 0,
-			items: [
-				{
-					id: "user",
-					role: "user",
-					blocks: [{ type: "text", text: "Make tools easier to read." }],
-				},
-				{
-					id: "call",
-					role: "assistant",
-					blocks: [{ type: "tool", text: "Tool call: functions.codemode" }],
-				},
-				{
-					id: "result",
-					role: "tool: functions.codemode",
-					blocks: [
-						{
-							type: "text",
-							text: Array.from(
-								{ length: 100 },
-								(_, index) => `line ${index}: ${"x".repeat(150)}`,
-							).join("\n"),
-							omittedChars: 17,
-						},
-						{ type: "text", text: "Second output segment" },
-						{
-							type: "unavailable",
-							text: "Image unavailable: invalid fixture image",
-						},
-					],
-				},
-				...Array.from({ length: 32 }, (_, index) => ({
-					id: `message-${index}`,
-					role: "assistant",
-					blocks: [
-						{
-							type: "text" as const,
-							text: `Message ${index}. Read earlier messages without losing your place.\n\nMore conversation content.`,
-						},
-					],
-				})),
-				{
-					id: "code",
-					role: "assistant",
-					blocks: [
-						{
-							type: "text",
-							text: "```typescript\nconst message = 'Hello Pi';\n```\n\nEnd of code example.",
-						},
-					],
-				},
-			],
-		};
-		const sessions = [summary, other];
+		const { sessions, snapshot } = chatRenderingFixture();
+		const other = sessions[1];
 		await renderSnapshots(page, sessions, snapshot);
 		if (width === 320)
 			await page.addInitScript(() => {
@@ -212,12 +296,6 @@ for (const width of [320, 390, 900])
 			"typescript",
 		);
 		await expect(page.locator(".history-notice")).toHaveCount(0);
-		const imageError = page.getByText(
-			"Image unavailable: invalid fixture image",
-			{ exact: true },
-		);
-		await expect(imageError).toBeVisible();
-		expect(await imageError.locator("xpath=ancestor::details").count()).toBe(0);
 		await expect.poll(distance).toBeLessThanOrEqual(1);
 		await expect(jump).toBeHidden();
 		async function checkComposer(height: number) {
@@ -1384,56 +1462,11 @@ for (const width of [320, 390, 900])
 		await checkComposer(620);
 		await expect(page.getByPlaceholder("Message Pi")).toBeFocused();
 		await page.setViewportSize({ width, height: 844 });
-		await history.evaluate((node) => {
-			node.scrollTop = 0;
-		});
-		const disclosure = page.locator(".tool-disclosure");
-		await expect(disclosure).toHaveCount(1);
-		await expect(disclosure.locator("summary")).toContainText("shortened");
-		await expect(disclosure.locator(".preview-note")).toBeHidden();
-		await expect(disclosure).not.toHaveAttribute("open");
-		await expect(disclosure.locator("pre").first()).toBeHidden();
-		await expect(page.locator(".tool-call")).toHaveText(
-			"Tool call: functions.codemode",
-		);
-		await expect(page.locator(".tool-call")).toHaveClass(/visually-hidden/);
-		await expect(page.locator('[data-native-item="call"]')).toHaveClass(
-			/visually-hidden/,
-		);
-		await expect(
-			page.locator('[data-native-item="result"] .message-role'),
-		).toHaveClass(/visually-hidden/);
-		await disclosure.locator("summary").click();
-		await expect(disclosure.locator("pre").first()).toBeVisible();
-		await expect(disclosure.locator("pre")).toHaveCount(2);
-		await expect(disclosure.locator(".preview-note")).toHaveText(
-			"Preview shortened · 17 characters omitted.",
-		);
-		expect(
-			await disclosure
-				.locator("pre")
-				.first()
-				.evaluate((node) => node.scrollHeight > node.clientHeight),
-		).toBe(true);
-		await expect(disclosure.locator("pre").first()).toContainText("line 99:");
-		if (width < 900) {
-			const horizontalScroll = await disclosure
-				.locator("pre")
-				.first()
-				.evaluate((node) => {
-					node.scrollLeft = 48;
-					return {
-						available: node.scrollWidth > node.clientWidth,
-						position: node.scrollLeft,
-					};
-				});
-			expect(horizontalScroll.available).toBe(true);
-			expect(horizontalScroll.position).toBeGreaterThan(0);
-		}
+		// Enter reading mode explicitly; disclosure clicks no longer prepare this journey.
+		await history.focus();
+		await page.keyboard.press("Home");
+		await expect.poll(() => history.evaluate((node) => node.scrollTop)).toBe(0);
 		await checkComposer(844);
-		await disclosure.locator("summary").focus();
-		await page.keyboard.press("Space");
-		await expect(disclosure.locator("pre").first()).toBeHidden();
 		const menu = page.getByRole("button", { name: /^Open sessions:/ });
 		const sidebar = page.getByRole("dialog", { name: "Live sessions" });
 		await menu.focus();
@@ -2109,6 +2142,7 @@ for (const width of [320, 390, 900])
 		await sidebar.getByRole("button", { name: "Close sessions" }).click();
 		await expect(menu).toBeFocused();
 	});
+}
 
 test("M3 home and sidebar groups exact working directories with recency and truthful status", async ({
 	page,
