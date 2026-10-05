@@ -902,7 +902,6 @@ for (const width of [320, 390])
 		page,
 		context,
 	}, testInfo) => {
-		if (c4Cookies.length) await context.addCookies(c4Cookies);
 		await page.addInitScript(() => {
 			const create = URL.createObjectURL.bind(URL),
 				revoke = URL.revokeObjectURL.bind(URL);
@@ -921,287 +920,308 @@ for (const width of [320, 390])
 		});
 		await page.setViewportSize({ width, height: 844 });
 		await page.goto("/");
-		if (!c4Cookies.length) {
+		try {
+			await pairDevice(page, false);
+			expect(
+				(
+					await context.request.post("/api/fixture/clock", {
+						data: { freeze: false },
+					})
+				).ok(),
+			).toBe(true);
+			expect(
+				(
+					await context.request.post("/api/fixture/stop-state", {
+						data: { action: "reset" },
+					})
+				).ok(),
+			).toBe(true);
+			await expectSessions(page, 2);
+			const sessions = (
+				await (await context.request.get("/api/snapshot")).json()
+			).sessions;
+			const a = sessions.find((s: { session: string }) =>
+				s.session.includes("Browser test"),
+			).instance;
+			const b = sessions.find((s: { session: string }) =>
+				s.session.includes("Browser other"),
+			).instance;
+			await chooseSession(page, a);
+			const picker = page.getByLabel("Images for selected Pi (local picker)");
+			const draft = page.getByLabel("Text for selected Pi (local draft)");
+			const previews = page.getByRole("img", {
+				name: "Local attachment preview",
+			});
+			const remove = page.getByRole("button", { name: /^Remove image/ });
+			const sent: {
+				requestId: string;
+				text: string;
+				images: { source: string; mime: string }[];
+			}[] = [];
+			const mutations: string[] = [];
+			page.on("request", (request) => {
+				if (request.url().endsWith("/api/image"))
+					sent.push(request.postDataJSON());
+				if (
+					request.method() === "POST" &&
+					/\/api\/(control|image|text|stop)$/.test(request.url())
+				)
+					mutations.push(request.url());
+			});
+			const sharp = (await import("sharp")).default;
+			const first = { name: "first.png", mimeType: "image/png", buffer: png };
+			const second = {
+				name: "second.jpg",
+				mimeType: "image/jpeg",
+				buffer: await sharp(png).jpeg().toBuffer(),
+			};
+			const paste = (file: typeof first) =>
+				draft.evaluate(
+					(input, file) => {
+						const clipboardData = new DataTransfer();
+						clipboardData.items.add(
+							new File(
+								[Uint8Array.from(atob(file.source), (c) => c.charCodeAt(0))],
+								file.name,
+								{ type: file.mimeType },
+							),
+						);
+						return input.dispatchEvent(
+							new ClipboardEvent("paste", {
+								clipboardData,
+								bubbles: true,
+								cancelable: true,
+							}),
+						);
+					},
+					{
+						name: file.name,
+						mimeType: file.mimeType,
+						source: file.buffer.toString("base64"),
+					},
+				);
+			await expect(picker).toHaveAttribute("multiple", "");
+			await expect(picker).toHaveAccessibleDescription(
+				"Up to four still PNG, JPEG or WebP images · 4 MB total",
+			);
+			await picker.setInputFiles({
+				name: "unsafe.gif",
+				mimeType: "image/gif",
+				buffer: Buffer.from("GIF89a"),
+			});
+			await expect(page.locator(".composer .input-notice")).toContainText(
+				"HEIC/SVG/GIF unsupported",
+			);
+			await expect(previews).toHaveCount(0);
+			await draft.fill("ordinary pasted text");
+			await draft.press("ControlOrMeta+a");
+			await draft.press("ControlOrMeta+c");
+			await draft.fill("retained: ");
+			await draft.press("End");
+			await draft.press("ControlOrMeta+v");
+			await expect(draft).toHaveValue("retained: ordinary pasted text");
+			await draft.fill("local text");
+			await picker.setInputFiles([first, second]);
+			await expect(previews).toHaveCount(2);
+			await expect
+				.poll(() =>
+					previews
+						.first()
+						.evaluate((img) => (img as HTMLImageElement).naturalWidth),
+				)
+				.toBe(1);
+			const firstUrl = await previews.first().getAttribute("src");
+			expect(await paste({ ...first, name: "third.png" })).toBe(false);
+			expect(await paste({ ...first, name: "fourth.png" })).toBe(false);
+			await expect(remove).toHaveCount(4);
+			await expect(remove.nth(0)).toHaveAccessibleName(
+				"Remove image 1: first.png",
+			);
+			await expect(remove.nth(1)).toHaveAccessibleName(
+				"Remove image 2: second.jpg",
+			);
+			const row = page.locator(".attachments");
+			for (let i = 0; i < 4; i++) {
+				const box = (await remove.nth(i).boundingBox())!;
+				expect(box.width).toBeGreaterThanOrEqual(44);
+				expect(box.height).toBeGreaterThanOrEqual(44);
+				expect(box.y).toBe((await remove.first().boundingBox())!.y);
+			}
+			expect(
+				(await row.boundingBox())!.y + (await row.boundingBox())!.height,
+			).toBeLessThanOrEqual((await draft.boundingBox())!.y);
+			await paste({ ...first, name: "fifth.png" });
+			await expect(page.locator(".composer .input-notice")).toContainText(
+				"up to four",
+			);
+			await picker.setInputFiles({ ...first, buffer: Buffer.alloc(4_000_001) });
+			await expect(previews).toHaveCount(4);
+			await expect(draft).toHaveValue("local text");
+			expect(mutations).toEqual([]);
+			await remove.nth(3).click();
+			await remove.nth(2).click();
+			await expect(draft).toBeFocused();
+			await chooseSession(page, b);
+			await expect(previews).toHaveCount(0);
+			await picker.setInputFiles({ ...first, name: "owner-b.png" });
+			await chooseSession(page, a);
+			await expect(previews).toHaveCount(2);
+			const before = (
+				await (await context.request.get("/api/fixture/dispatches")).json()
+			).dispatches;
+			await page.route(
+				"**/api/image",
+				async (route) => {
+					await route.fetch();
+					await route.abort();
+				},
+				{ times: 1 },
+			);
+			await page
+				.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
+				.click();
+			await expect(
+				page.getByText(/Uncertain — response lost; no automatic retry/),
+			).toBeVisible();
+			expect(sent).toHaveLength(1);
+			await expect(page.locator(".composer-availability")).toHaveCount(0);
+			await expect(page.locator(".composer .action-receipt > p")).toHaveCount(
+				1,
+			);
+			await expect(
+				page.locator(".composer .action-receipt summary"),
+			).toHaveText("Details");
+			const retry = page.getByRole("button", {
+				name: "Retry same outstanding input",
+			});
+			await expect(retry).toBeEnabled();
+			const tab = await context.newPage();
+			await tab.goto("/");
+			await chooseSession(tab, a);
+			await sidebarClick(tab, "Take over browser control");
+			await expect(retry).toBeDisabled();
+			await expect(page.locator(".composer-availability")).toHaveText(
+				"Another browser has control — take over explicitly to send.",
+			);
+			await context.request.post("/api/fixture/stop-state", {
+				data: { action: "work" },
+			});
+			await expect(
+				page.locator("header").getByText("Pi is working", { exact: true }),
+			).toBeVisible();
+			await page.evaluate(() => {
+				document.documentElement.style.fontSize = "125%";
+			});
+			for (const height of [300, 844]) {
+				await page.setViewportSize({ width, height });
+				await expect
+					.poll(async () => (await page.locator("main").boundingBox())!.height)
+					.toBe(height);
+				const box = (await page.locator(".composer").boundingBox())!;
+				const header = (await page.locator("header").boundingBox())!;
+				expect(header.y).toBeGreaterThanOrEqual(0);
+				expect(height - box.y - box.height).toBeLessThanOrEqual(24);
+				const notices = page.locator(".composer-notices");
+				await notices.evaluate((node) => {
+					node.scrollTop = node.scrollHeight;
+				});
+				await expect(retry).toBeVisible();
+				await page.screenshot({
+					path: testInfo.outputPath(
+						`uncertain-held-images-${width}-${height}.png`,
+					),
+				});
+			}
+			await page.evaluate(() => {
+				document.documentElement.style.fontSize = "";
+			});
+			await context.request.post("/api/fixture/stop-state", {
+				data: { action: "settled" },
+			});
+			await sidebarClick(tab, "Release control");
+			await tab.close();
+			await expect(retry).toBeEnabled();
+			expect(sent).toHaveLength(1); // Layout, ownership and activity changes never retry.
+			expect(sent[0].images).toEqual([
+				{ source: png.toString("base64"), mime: "image/png" },
+				{ source: second.buffer.toString("base64"), mime: "image/jpeg" },
+			]);
+			await draft.fill("edited after capture");
+			await remove.first().click();
+			await paste({ ...first, name: "new.png" });
+			await chooseSession(page, b);
+			await expect(remove.first()).toHaveAccessibleName(
+				"Remove image 1: owner-b.png",
+			);
+			await chooseSession(page, a);
+			await context.request.post("/api/fixture/restart");
+			await expect(page.getByLabel("Pairing code")).toBeVisible();
 			await page.getByLabel("Pairing code").fill(await freshCode());
 			await page.getByLabel("Remember this device").uncheck();
 			await page.getByRole("button", { name: "Pair this device" }).click();
-		}
-		await expectSessions(page, 2);
-		c4Cookies = await context.cookies();
-		const sessions = (await (await context.request.get("/api/snapshot")).json())
-			.sessions;
-		const a = sessions.find((s: { session: string }) =>
-			s.session.includes("Browser test"),
-		).instance;
-		const b = sessions.find((s: { session: string }) =>
-			s.session.includes("Browser other"),
-		).instance;
-		await chooseSession(page, a);
-		const picker = page.getByLabel("Images for selected Pi (local picker)");
-		const draft = page.getByLabel("Text for selected Pi (local draft)");
-		const previews = page.getByRole("img", {
-			name: "Local attachment preview",
-		});
-		const remove = page.getByRole("button", { name: /^Remove image/ });
-		const sent: {
-			requestId: string;
-			text: string;
-			images: { source: string; mime: string }[];
-		}[] = [];
-		const mutations: string[] = [];
-		page.on("request", (request) => {
-			if (request.url().endsWith("/api/image"))
-				sent.push(request.postDataJSON());
-			if (
-				request.method() === "POST" &&
-				/\/api\/(control|image|text|stop)$/.test(request.url())
-			)
-				mutations.push(request.url());
-		});
-		const sharp = (await import("sharp")).default;
-		const first = { name: "first.png", mimeType: "image/png", buffer: png };
-		const second = {
-			name: "second.jpg",
-			mimeType: "image/jpeg",
-			buffer: await sharp(png).jpeg().toBuffer(),
-		};
-		const paste = (file: typeof first) =>
-			draft.evaluate(
-				(input, file) => {
-					const clipboardData = new DataTransfer();
-					clipboardData.items.add(
-						new File(
-							[Uint8Array.from(atob(file.source), (c) => c.charCodeAt(0))],
-							file.name,
-							{ type: file.mimeType },
-						),
-					);
-					return input.dispatchEvent(
-						new ClipboardEvent("paste", {
-							clipboardData,
-							bubbles: true,
-							cancelable: true,
-						}),
-					);
-				},
-				{
-					name: file.name,
-					mimeType: file.mimeType,
-					source: file.buffer.toString("base64"),
-				},
-			);
-		await expect(picker).toHaveAttribute("multiple", "");
-		await expect(picker).toHaveAccessibleDescription(
-			"Up to four still PNG, JPEG or WebP images · 4 MB total",
-		);
-		await picker.setInputFiles({
-			name: "unsafe.gif",
-			mimeType: "image/gif",
-			buffer: Buffer.from("GIF89a"),
-		});
-		await expect(page.locator(".composer .input-notice")).toContainText(
-			"HEIC/SVG/GIF unsupported",
-		);
-		await expect(previews).toHaveCount(0);
-		await draft.fill("ordinary pasted text");
-		await draft.press("ControlOrMeta+a");
-		await draft.press("ControlOrMeta+c");
-		await draft.fill("retained: ");
-		await draft.press("End");
-		await draft.press("ControlOrMeta+v");
-		await expect(draft).toHaveValue("retained: ordinary pasted text");
-		await draft.fill("local text");
-		await picker.setInputFiles([first, second]);
-		await expect(previews).toHaveCount(2);
-		await expect
-			.poll(() =>
-				previews
-					.first()
-					.evaluate((img) => (img as HTMLImageElement).naturalWidth),
-			)
-			.toBe(1);
-		const firstUrl = await previews.first().getAttribute("src");
-		expect(await paste({ ...first, name: "third.png" })).toBe(false);
-		expect(await paste({ ...first, name: "fourth.png" })).toBe(false);
-		await expect(remove).toHaveCount(4);
-		await expect(remove.nth(0)).toHaveAccessibleName(
-			"Remove image 1: first.png",
-		);
-		await expect(remove.nth(1)).toHaveAccessibleName(
-			"Remove image 2: second.jpg",
-		);
-		const row = page.locator(".attachments");
-		for (let i = 0; i < 4; i++) {
-			const box = (await remove.nth(i).boundingBox())!;
-			expect(box.width).toBeGreaterThanOrEqual(44);
-			expect(box.height).toBeGreaterThanOrEqual(44);
-			expect(box.y).toBe((await remove.first().boundingBox())!.y);
-		}
-		expect(
-			(await row.boundingBox())!.y + (await row.boundingBox())!.height,
-		).toBeLessThanOrEqual((await draft.boundingBox())!.y);
-		await paste({ ...first, name: "fifth.png" });
-		await expect(page.locator(".composer .input-notice")).toContainText(
-			"up to four",
-		);
-		await picker.setInputFiles({ ...first, buffer: Buffer.alloc(4_000_001) });
-		await expect(previews).toHaveCount(4);
-		await expect(draft).toHaveValue("local text");
-		expect(mutations).toEqual([]);
-		await remove.nth(3).click();
-		await remove.nth(2).click();
-		await expect(draft).toBeFocused();
-		await chooseSession(page, b);
-		await expect(previews).toHaveCount(0);
-		await picker.setInputFiles({ ...first, name: "owner-b.png" });
-		await chooseSession(page, a);
-		await expect(previews).toHaveCount(2);
-		const before = (
-			await (await context.request.get("/api/fixture/dispatches")).json()
-		).dispatches;
-		await page.route(
-			"**/api/image",
-			async (route) => {
-				await route.fetch();
-				await route.abort();
-			},
-			{ times: 1 },
-		);
-		await page
-			.getByRole("button", { name: /^(Send|Steer)$/, exact: true })
-			.click();
-		await expect(
-			page.getByText(/Uncertain — response lost; no automatic retry/),
-		).toBeVisible();
-		expect(sent).toHaveLength(1);
-		await expect(page.locator(".composer-availability")).toHaveCount(0);
-		await expect(page.locator(".composer .action-receipt > p")).toHaveCount(1);
-		await expect(page.locator(".composer .action-receipt summary")).toHaveText(
-			"Details",
-		);
-		const retry = page.getByRole("button", {
-			name: "Retry same outstanding input",
-		});
-		await expect(retry).toBeEnabled();
-		const tab = await context.newPage();
-		await tab.goto("/");
-		await chooseSession(tab, a);
-		await sidebarClick(tab, "Take over browser control");
-		await expect(retry).toBeDisabled();
-		await expect(page.locator(".composer-availability")).toHaveText(
-			"Another browser has control — take over explicitly to send.",
-		);
-		await context.request.post("/api/fixture/stop-state", {
-			data: { action: "work" },
-		});
-		await expect(
-			page.locator("header").getByText("Pi is working", { exact: true }),
-		).toBeVisible();
-		await page.evaluate(() => {
-			document.documentElement.style.fontSize = "125%";
-		});
-		for (const height of [300, 844]) {
-			await page.setViewportSize({ width, height });
-			await expect
-				.poll(async () => (await page.locator("main").boundingBox())!.height)
-				.toBe(height);
-			const box = (await page.locator(".composer").boundingBox())!;
-			const header = (await page.locator("header").boundingBox())!;
-			expect(header.y).toBeGreaterThanOrEqual(0);
-			expect(height - box.y - box.height).toBeLessThanOrEqual(24);
-			const notices = page.locator(".composer-notices");
-			await notices.evaluate((node) => {
-				node.scrollTop = node.scrollHeight;
-			});
-			await expect(retry).toBeVisible();
-			await page.screenshot({
-				path: testInfo.outputPath(
-					`uncertain-held-images-${width}-${height}.png`,
-				),
-			});
-		}
-		await page.evaluate(() => {
-			document.documentElement.style.fontSize = "";
-		});
-		await context.request.post("/api/fixture/stop-state", {
-			data: { action: "settled" },
-		});
-		await sidebarClick(tab, "Release control");
-		await tab.close();
-		await expect(retry).toBeEnabled();
-		expect(sent).toHaveLength(1); // Layout, ownership and activity changes never retry.
-		expect(sent[0].images).toEqual([
-			{ source: png.toString("base64"), mime: "image/png" },
-			{ source: second.buffer.toString("base64"), mime: "image/jpeg" },
-		]);
-		await draft.fill("edited after capture");
-		await remove.first().click();
-		await paste({ ...first, name: "new.png" });
-		await chooseSession(page, b);
-		await expect(remove.first()).toHaveAccessibleName(
-			"Remove image 1: owner-b.png",
-		);
-		await chooseSession(page, a);
-		await context.request.post("/api/fixture/restart");
-		await expect(page.getByLabel("Pairing code")).toBeVisible();
-		await page.getByLabel("Pairing code").fill(await freshCode());
-		await page.getByLabel("Remember this device").uncheck();
-		await page.getByRole("button", { name: "Pair this device" }).click();
-		await expectSelected(page, a);
-		expect(sent).toHaveLength(1);
-		await page
-			.getByRole("button", { name: "Retry same outstanding input" })
-			.click();
+			await expectSelected(page, a);
+			expect(sent).toHaveLength(1);
+			await page
+				.getByRole("button", { name: "Retry same outstanding input" })
+				.click();
 
-		await expect.poll(() => sent.length).toBe(2);
-		expect(sent[1].requestId).toBe(sent[0].requestId);
-		expect(sent[1].images).toEqual(sent[0].images);
-		expect(sent[1].text).toBe("local text");
-		expect(
-			(await (await context.request.get("/api/fixture/dispatches")).json())
-				.dispatches,
-		).toBe(before + 1);
-		await expect(draft).toHaveValue("edited after capture");
-		await expect(remove.first()).toHaveAccessibleName(
-			"Remove image 1: second.jpg",
-		);
-		await expect(remove.nth(1)).toHaveAccessibleName("Remove image 2: new.png");
-		expect(
-			await page.evaluate(
-				() => document.documentElement.scrollWidth <= innerWidth,
-			),
-		).toBe(true);
-		await sidebarClick(page, "Release control");
-		await expect(
-			page.getByRole("dialog", { name: "Live sessions" }),
-		).toBeHidden();
-		c4Cookies = await context.cookies();
-		expect(
-			await page.evaluate(() => localStorage.length + sessionStorage.length),
-		).toBe(0);
-		const urls = await page.evaluate(
-			() =>
-				(
-					window as unknown as {
-						objectUrls: { created: string[]; revoked: string[] };
-					}
-				).objectUrls,
-		);
-		expect(urls.revoked).toContain(firstUrl);
-		expect(urls.created.length - urls.revoked.length).toBe(2);
-		await chooseSession(page, "");
-		await expect
-			.poll(() =>
-				page.evaluate(() => {
-					const urls = (
+			await expect.poll(() => sent.length).toBe(2);
+			expect(sent[1].requestId).toBe(sent[0].requestId);
+			expect(sent[1].images).toEqual(sent[0].images);
+			expect(sent[1].text).toBe("local text");
+			expect(
+				(await (await context.request.get("/api/fixture/dispatches")).json())
+					.dispatches,
+			).toBe(before + 1);
+			await expect(draft).toHaveValue("edited after capture");
+			await expect(remove.first()).toHaveAccessibleName(
+				"Remove image 1: second.jpg",
+			);
+			await expect(remove.nth(1)).toHaveAccessibleName(
+				"Remove image 2: new.png",
+			);
+			expect(
+				await page.evaluate(
+					() => document.documentElement.scrollWidth <= innerWidth,
+				),
+			).toBe(true);
+			await sidebarClick(page, "Release control");
+			await expect(
+				page.getByRole("dialog", { name: "Live sessions" }),
+			).toBeHidden();
+			expect(
+				await page.evaluate(() => localStorage.length + sessionStorage.length),
+			).toBe(0);
+			const urls = await page.evaluate(
+				() =>
+					(
 						window as unknown as {
 							objectUrls: { created: string[]; revoked: string[] };
 						}
-					).objectUrls;
-					return urls.created.length - urls.revoked.length;
-				}),
-			)
-			.toBe(0);
+					).objectUrls,
+			);
+			expect(urls.revoked).toContain(firstUrl);
+			expect(urls.created.length - urls.revoked.length).toBe(2);
+			await chooseSession(page, "");
+			await expect
+				.poll(() =>
+					page.evaluate(() => {
+						const urls = (
+							window as unknown as {
+								objectUrls: { created: string[]; revoked: string[] };
+							}
+						).objectUrls;
+						return urls.created.length - urls.revoked.length;
+					}),
+				)
+				.toBe(0);
+		} finally {
+			const reset = await context.request.post("/api/fixture/stop-state", {
+				data: { action: "reset" },
+			});
+			expect([200, 401]).toContain(reset.status());
+			await forgetPairedContext(context);
+		}
 	});
 
 // Questionnaire interactions deliberately reveal the panel; reviewing alone never acquires control.
