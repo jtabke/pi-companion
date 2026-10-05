@@ -109,25 +109,30 @@ export async function discover(runtime: string) {
 	const files = readdirSync(runtime).filter((name) =>
 		/^b-[a-f0-9]{32}\.json$/.test(name),
 	);
-	if (files.length > limits.peers) return { overLimit: true, peers: [] };
 	const peers: { registration: Registration; status: Status }[] = [];
-	// Bounded parallel reachability checks; no PID or mtime inference.
-	await Promise.all(
-		files.map(async (name) => {
-			try {
-				const data: unknown = JSON.parse(ownerRead(join(runtime, name), 1024));
-				if (
-					!Value.Check(RegistrationSchema, data) ||
-					name !== `b-${data.instance}.json`
-				)
-					return;
-				const status = await readStatus(runtime, data);
-				peers.push({ registration: data, status });
-			} catch {
-				/* Invalid, stale or unreachable registrations are never attached. */
-			}
-		}),
-	);
+	// Limit reachable identities, not leftover files from abruptly closed terminals.
+	// Batch reachability checks to bound concurrent sockets; no PID or mtime inference.
+	for (let offset = 0; offset < files.length; offset += limits.peers) {
+		await Promise.all(
+			files.slice(offset, offset + limits.peers).map(async (name) => {
+				try {
+					const data: unknown = JSON.parse(
+						ownerRead(join(runtime, name), 1024),
+					);
+					if (
+						!Value.Check(RegistrationSchema, data) ||
+						name !== `b-${data.instance}.json`
+					)
+						return;
+					const status = await readStatus(runtime, data);
+					peers.push({ registration: data, status });
+				} catch {
+					/* Invalid, stale or unreachable registrations are never attached. */
+				}
+			}),
+		);
+		if (peers.length > limits.peers) return { overLimit: true, peers: [] };
+	}
 	return { overLimit: false, peers };
 }
 

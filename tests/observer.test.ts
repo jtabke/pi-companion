@@ -1597,6 +1597,59 @@ describe("native snapshot and private resources", () => {
 		}
 	});
 
+	it("discovers live terminals despite more than 32 stale registrations without deleting them", async () => {
+		const path = runtime(),
+			bridge = createBridge(path);
+		try {
+			const live = await bridge.start(context());
+			for (let i = 0; i < 40; i++) {
+				const instance = i.toString(16).padStart(32, "0");
+				writeFileSync(
+					join(path, `b-${instance}.json`),
+					JSON.stringify({ ...live, instance, generation: "f".repeat(32) }),
+					{ mode: 0o600 },
+				);
+			}
+			const result = await discover(path);
+			expect(result.overLimit).toBe(false);
+			expect(result.peers.map((peer) => peer.registration)).toEqual([live]);
+			expect(
+				JSON.parse(
+					readFileSync(join(path, `b-${"0".repeat(32)}.json`), "utf8"),
+				),
+			).toEqual({
+				...live,
+				instance: "0".repeat(32),
+				generation: "f".repeat(32),
+			});
+			await bridge.close();
+			expect(await discover(path)).toEqual({ overLimit: false, peers: [] });
+		} finally {
+			await bridge.close();
+			rmSync(path, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed only when reachable terminals exceed 32 and recovers after one closes", async () => {
+		const path = runtime(),
+			bridges = Array.from({ length: 33 }, () => createBridge(path));
+		try {
+			for (const bridge of bridges.slice(0, 32)) await bridge.start(context());
+			const atLimit = await discover(path);
+			expect(atLimit.overLimit).toBe(false);
+			expect(atLimit.peers).toHaveLength(32);
+			await bridges[32]!.start(context());
+			expect(await discover(path)).toEqual({ overLimit: true, peers: [] });
+			await bridges[32]!.close();
+			const recovered = await discover(path);
+			expect(recovered.overLimit).toBe(false);
+			expect(recovered.peers).toHaveLength(32);
+		} finally {
+			await Promise.all(bridges.map((bridge) => bridge.close()));
+			rmSync(path, { recursive: true, force: true });
+		}
+	});
+
 	it("authenticates real UDS; generation invalidation and disconnect never changes owner", async () => {
 		const path = runtime(),
 			bridge = createBridge(path),
