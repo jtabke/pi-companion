@@ -1,10 +1,21 @@
-# Pi Companion
+<p align="center">
+  <img src="web/public/icon-512.png" width="128" height="128" alt="Pi logo" />
+</p>
 
-Interact with Pi running on your computer from your phone through private Tailscale
-HTTPS access. Read its output, inspect images, and send text and image feedback without
-leaving your existing terminal sessions.
+<h1 align="center">Pi Companion</h1>
 
-[Get started](#get-started) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [Stack limitations](#stack-limitations)
+<p align="center">
+  Read and reply to your computer's live Pi sessions from your phone over private Tailscale HTTPS.
+</p>
+
+<p align="center">
+  <a href="#get-started">Get started</a> ·
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#stack-limitations">Stack limitations</a>
+</p>
+
+---
 
 > [!IMPORTANT]
 > Pi runs on your computer. Companion connects to your existing sessions; it does not
