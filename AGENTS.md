@@ -1,68 +1,40 @@
 # Pi Companion Agent Guide
 
-Purpose: deliver small, safe changes with little code and few maintenance obligations.
-Prefer fewer concepts and moving parts, not the lowest line count at any cost.
+Deliver small, complete changes with few concepts and maintenance obligations. Use [README](README.md) for behavior/setup, [architecture](docs/architecture.md) for ownership, and [extension display](docs/extension-display.md) only for publisher work.
 
-## Scope and ownership
+## Scope and implementation
 
-- Read the approved request or issue and the relevant existing code before editing. Use `README.md` for current behavior, architecture, technology boundaries and setup; use `docs/extension-display.md` for its publisher contract. Approved task-specific restrictions still apply.
-- Track unfinished work in issues and completed changes in Git commits. Do not recreate plan or checkpoint-history files.
-- Trace the real entry point and owning boundary. Check whether existing behavior or configuration already meets the request. Reproduce a reported bug when practical.
-- Define one observable outcome, a closed file envelope, and the smallest useful validation. Deliver thin end-to-end slices; do not build speculative infrastructure first.
-- Use one active writer per checkout across all sessions and children. Keep unrelated user changes intact. Independent concurrent writers need separate worktrees from a committed base. Delegate only when isolation, specialist judgment, or independent review earns its cost; handle routine bounded work directly.
-- Stop and ask before an unapproved product, architecture, dependency, persistence, release, or safety decision. Do not stage, commit, publish, or deploy without authorization. When an authorized checkpoint passes its required checks, commit its intended changes before starting another independent checkpoint.
+- Trace the real entry point and owner; check existing behavior/configuration before adding a mechanism. Define one observable outcome, a closed file envelope, and proportional validation. Reproduce bugs when practical.
+- Change the existing owner. New abstractions, dependencies, options, persisted fields, compatibility paths, or processes need a demonstrated requirement in callers or focused evidence. Extract only for a stable concept, real duplication, or owned policy; do not split cohesive code to reduce line count.
+- Use strict TypeScript, direct control flow, existing interfaces, shared UI components and CSS tokens. Avoid `any`, speculative flexibility, and test-only production hooks. Include accessible labels, keyboard/focus, touch targets, and applicable pending/error states.
+- Use one writer per checkout across all sessions/children; independent writers need isolated worktrees from committed state. Preserve unrelated changes. Delegate only when isolation, specialist judgment, or independent review earns its cost.
+- Track unfinished work in issues and completed work in commits; do not recreate plan/history files. Escalate unapproved product, architecture, dependency, persistence, release, or safety decisions. Commit authorized checkpoints after checks; publishing/deployment require their own authority.
 
-## Small, maintainable code
+## Runtime and security boundaries
 
-- Prefer changing the existing owner, using existing configuration, or deleting obsolete behavior over adding a parallel mechanism.
-- Before adding an abstraction, dependency, option, persisted field, compatibility path, or background process, identify the required outcome that fails without it and verify that claim in code, callers, or a focused test.
-- Keep one owner for each policy. Fix a bug at the narrowest shared boundary that preserves caller contracts; do not stack local patches around it.
-- Use direct control flow, clear domain names, strict TypeScript, and existing interfaces. Avoid `any`, hidden coupling, speculative flexibility, and generic frameworks for one use case.
-- Extract code only to name a stable concept, remove actual duplication, or isolate an owned policy. Do not add wrappers or split cohesive logic just to shorten functions.
-- Optimize for fewer concepts, states, branches, and maintenance obligations. Do not compress readable code, remove safety checks, or weaken tests to meet a line-count target.
-- Reuse existing UI components and CSS tokens. Include labels, keyboard operation, visible focus, usable touch targets, and relevant pending/error states in the implementation.
-- Before handoff, remove unnecessary additions introduced by the change. Keep scope closed; do not add adjacent improvements or optional-work lists.
+- `src/extension/` owns live Pi integration/native dispatch; `src/gateway/` owns browser authentication, routing, control, and media; `src/shared/` owns browser-safe contracts; `web/src/` owns browser UI.
+- Pi owns agents, settings, tools, and history. Never duplicate sessions/transcripts or bundle another Pi runtime.
+- Preserve authentication, exact-origin/CSRF checks, session identity, control ownership, and input admission. Reconnect must not send input or acquire control. Never silently resend uncertain input.
+- Keep credentials out of URLs, logs, and browser storage. Persist only approved data through its existing owner. Test with isolated fixtures.
 
-## Runtime boundaries and safety
+## Managed runtime updates
 
-- `src/extension/` owns live Pi integration and native command dispatch; `src/gateway/` owns browser authentication, routing, control, and media; `src/shared/` owns browser-safe contracts; `web/src/` owns the browser UI.
-- Pi owns the agent, settings, tools, and conversation history. Do not create another agent session, duplicate transcripts, or bundle a second Pi runtime.
-- Preserve authentication, exact-origin/CSRF checks, session identity, control ownership, and input admission. Reconnection must not send input or acquire control automatically. Never silently resend an uncertain input.
-- Keep credentials out of URLs, logs, and browser storage. Persist only explicitly approved data through its existing owner.
-- Use isolated local fixtures for tests. A request to implement Companion features authorizes the required local build and bounded restart of the known Companion runtime so those features become live. Do not ask again for that restart. Use the documented managed restart, preserve the exact origin/port/runtime/auth directory and remembered access, identify the owned gateway/Serve processes, and verify readiness after replacement. A failed build must leave the running gateway alone. Do not reset unrelated Serve routes, change personal Pi settings or provider state, or install/upgrade Pi under this authority.
-- Gateway restart does not stop Pi terminals and does not replace their loaded bridge code. When a bridge change requires a Pi restart, use a supported session-preserving lifecycle at an idle boundary and retain the same native session; never kill a busy terminal or inject model input to force a restart. If no supported restart can be performed from the available tools, name the exact terminal-owner action that remains. Do not claim a bridge feature is live merely because the gateway restarted.
-- Validate requested behavior through the running Companion after restart, using read-only observations where possible. Do not send agent input or call a paid provider solely to verify UI changes. Fixture success does not prove live-Pi or real-phone behavior; physical-phone checks remain owner-operated unless a device is available.
-- Start only processes needed for the task. Retain their identity, avoid duplicates, and clean up only processes and temporary data the task owns.
+A feature implementation request authorizes its required local build and bounded restart of the known Companion runtime. Do not ask again for that restart. Follow [the managed lifecycle](docs/setup.md#stop-restart-and-reconnect): preserve exact origin, port, runtime/auth directory and remembered access; identify owned gateway/Serve processes; verify readiness after replacement. A failed build leaves the running gateway alone. This authority excludes unrelated Serve routes, personal Pi settings/provider state, and Pi installation/upgrades.
 
-## Tests that earn their cost
+Gateway restart neither stops Pi terminals nor reloads their bridge. Bridge updates require a supported session-preserving restart at an idle boundary, retaining the same native session. Never kill a busy terminal or inject model input to force restart. If tools cannot perform it, report the exact terminal-owner action remaining; do not claim bridge changes are live after only a gateway restart.
 
-Before adding a test, answer:
+Verify changed behavior through running Companion after an applicable restart, preferably read-only. Do not send agent input or call paid providers merely to verify UI. Fixtures do not prove live-Pi or physical-phone behavior; phone checks remain owner-operated unless a device is available. Documentation edits need no restart. Start only needed processes, retain identity, avoid duplicates, and clean up only owned processes/data.
 
-1. What observable behavior or independent contract does it protect?
-2. What specific broken behavior must make it fail?
-3. Which existing test owns this contract, and what distinct failure justifies another test?
+## Tests and final validation
 
-Prefer one primary test owner per contract. Extend an existing case table when appropriate. Keep tests at another layer only for distinct failures, such as HTTP authorization, browser recovery, or native dispatch mapping. Use the cheapest boundary that proves the required behavior; not every case needs a browser.
+A test must protect observable behavior or an independent contract, reject a specific regression, and add a distinct failure beyond existing coverage. Extend the primary owner's case table where useful; retain other layers for distinct HTTP authorization, recovery, or dispatch risks. Use independent expected values, negative cases reaching the intended guard, small deterministic fixtures, and bounded condition waits. Avoid self-proving mocks, copied implementation inventories, broad fixture families, and unrelated test audits/deletions.
 
-- Assert outcomes with independent expected values. Avoid assertion-free coverage probes, self-comparisons, mocks that implement the behavior under test, and duplicated implementation inventories.
-- Negative tests must reach the intended guard. Keep fixtures small and deterministic; use bounded condition waits rather than arbitrary sleeps.
-- Test through existing production boundaries. Do not add production exports, flags, wrappers, or injection hooks solely for tests.
-- Add regression coverage proportional to changed behavior. Do not build broad fixture families or audit/delete unrelated tests without approval.
+- Iterate with affected files/cases. Standalone `npm test` and `npm run test:browser` build first because fixtures use compiled code; preserve this contract and use file/name filters.
+- Bounded backend changes use `npm run typecheck` and affected tests. Browser behavior/contracts need relevant cases and engine filters, not the full browser suite by default.
+- Use `npm run check` for an approved release/integration gate or changes spanning independent contracts. It includes typechecking, build, unit/process and browser suites. Run it once per stable candidate; do not separately repeat its constituent suites.
+- Docs-only changes need scoped formatting, links, and command checks, not application tests/builds. Copy affecting dimensions needs wrapping/overflow evidence.
+- For mobile UI, define the journey and layout criteria first. Review the complete screen's content width, permanent chrome, keyboard and touch behavior. State claims still requiring a real phone.
+- Bound checks by observed runtime. Before checks expected to exceed two minutes, explain the broad selection and known runtime. Narrow selection before weakening timeouts/assertions or parallelizing shared fixtures. Inspect timeout diagnostics before changing approach.
+- Reuse passing evidence while covered code, tests, configuration and relevant environment remain unchanged. After fixes, rerun affected checks. Self-review suffices for routine work; one independent stable-diff review covers auth, command authority, persistence/security, or broad changes. Re-review only materially invalidated evidence.
 
-## Validation and review
-
-- For mobile UI changes, define the target journey and observable layout criteria before editing. Review the complete screen for usable content width, permanent chrome, keyboard behavior, and touch operation—not only isolated controls or absence of overlap. Use focused browser evidence and state which claims still require a real phone.
-- During iteration, run the changed test file or smallest relevant selection. Do not turn each edit into a release gate.
-- Standalone `npm test` and `npm run test:browser` build first because fixtures use compiled code. Preserve that contract. Use their file/name filters for focused checks.
-- Select final checks from the changed contracts before running them. For a behavior-preserving change within one backend owner, prefer typechecking and that owner's test file or relevant cases. Run browser cases when browser behavior or a browser-only contract is affected; use file/name and engine filters. Do not make the full browser suite a default gate for every refactor.
-- Use `npm run check` when an approved release/integration gate requires it or the change affects enough independent contracts to need the full suite. It includes typechecking, build, unit/process tests, and browser tests. Run required aggregates once; do not run their suites separately and then repeat them through `check` on the same unchanged candidate.
-- Before a check expected to take more than two minutes, state why the broad selection is necessary and give its observed runtime. Prefer narrowing the selection over lowering timeouts, weakening assertions, or adding parallel workers to shared-state fixtures.
-- Reuse passing evidence only while the covered code, tests, configuration, and relevant environment remain unchanged. After a fix, rerun affected checks, not every successful suite. Run broader checks again only when the change invalidates their evidence.
-- Do not run application tests or builds for documentation-only changes. Check affected links and command descriptions instead. UI copy that changes layout needs focused wrapping/overflow review.
-- Bound checks using observed runtimes. A full browser suite can take several minutes; do not copy another project's short timeout. After a timeout, inspect the output and change the approach rather than repeating the same command blindly.
-- Self-review is sufficient for routine, bounded, low-risk changes unless the approved plan says otherwise. Use one fresh independent review of the stable diff for authentication, command authority, persistence/security, or broad cross-cutting changes. Reuse a clean review for unchanged work; re-review only material affected changes.
-- Fix accepted findings in one writer pass. Do not loop on optional polish or repeat checks merely to improve a report.
-
-## Handoff
-
-Report changed files, behavior, exact checks and results, and concrete residual risks. State what was not tested and whether anything was staged or committed. Keep logs and screenshots outside the repository. Do not claim deployment, phone verification, or compatibility beyond the evidence.
+Report files, behavior, exact checks/results, untested claims, concrete risks, and commit/deployment state. Keep logs/screenshots outside the repo and do not claim phone or compatibility evidence beyond what was observed.
