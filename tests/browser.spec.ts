@@ -4452,6 +4452,77 @@ async function forgetPairedContext(context: BrowserContext) {
 	});
 	expect([200, 401]).toContain(response.status());
 }
+test("Discovery recovery explains transient failure at 320px, preserves drafts and never claims control or resends", async ({
+	page,
+	context,
+}) => {
+	await page.setViewportSize({ width: 320, height: 568 });
+	let failure: "timeout" | "peer-limit" | undefined;
+	await page.route(/\/api\/(events|snapshot)(\?|$)/, async (route) => {
+		const url = new URL(route.request().url());
+		const response = await context.request.get(`/api/snapshot${url.search}`);
+		if (!response.ok()) {
+			await route.fulfill({ response });
+			return;
+		}
+		const view = await response.json();
+		if (failure) {
+			view.connection = "unavailable";
+			view.sessions = [];
+			delete view.snapshot;
+			view.discovery = { state: failure, liveTerminals: 0 };
+		}
+		if (url.pathname === "/api/events")
+			await route.fulfill({
+				status: 200,
+				contentType: "text/event-stream",
+				body: `event: snapshot\ndata: ${JSON.stringify(view)}\n\n`,
+			});
+		else await route.fulfill({ status: 200, json: view });
+	});
+	await page.goto("/");
+	await pairDevice(page, false);
+	const view = await (await context.request.get("/api/snapshot")).json();
+	await chooseSession(page, view.sessions[0].instance);
+	const draft = page.getByLabel("Text for selected Pi (local draft)");
+	await draft.fill("Keep this unsent draft through recovery");
+	const mutations: string[] = [];
+	page.on("request", (req) => {
+		if (
+			req.method() === "POST" &&
+			/\/api\/(control|text|image|stop)$/.test(new URL(req.url()).pathname)
+		)
+			mutations.push(req.url());
+	});
+	await page.getByRole("button", { name: /^Open sessions:/ }).click();
+	const dialog = page.getByRole("dialog", { name: "Live sessions" });
+	failure = "timeout";
+	await expect(
+		dialog.getByText(
+			"A terminal is taking too long to respond. Retrying automatically; your drafts are safe.",
+		),
+	).toBeVisible({ timeout: 10_000 });
+	await expect(
+		dialog.getByText("0 live terminals", { exact: true }),
+	).toHaveCount(0);
+	expect(
+		await page.evaluate(
+			() => document.documentElement.scrollWidth <= innerWidth,
+		),
+	).toBe(true);
+	failure = "peer-limit";
+	await expect(dialog.getByText(/More than 32 terminals are live/)).toBeVisible(
+		{ timeout: 10_000 },
+	);
+	failure = undefined;
+	await expect(dialog.getByRole("group", { name: / · / }).first()).toBeVisible({
+		timeout: 10_000,
+	});
+	await dialog.getByRole("button", { name: "Close sessions" }).click();
+	await expect(draft).toHaveValue("Keep this unsent draft through recovery");
+	expect(mutations).toEqual([]);
+});
+
 async function pairDevice(page: Page, remember = true) {
 	await page.getByLabel("Pairing code").fill(await freshCode());
 	await page.getByLabel("Remember this device").setChecked(remember);
@@ -5691,8 +5762,8 @@ test("Native rename replacement generation admits a new explicit name without re
 			name: "Fresh generation explicit name",
 		},
 	]);
-	expect(posts[0].requestId).toMatch(/^[a-f0-9]{32}$/);
-	expect(posts[1].requestId).toMatch(/^[a-f0-9]{32}$/);
+	expect(posts[0].requestId).toMatch(/^t[a-f0-9]{32}$/);
+	expect(posts[1].requestId).toMatch(/^t[a-f0-9]{32}$/);
 	expect(posts[1].requestId).not.toBe(posts[0].requestId);
 	const counts = await (
 		await context.request.get("/api/fixture/dispatches")
@@ -5834,7 +5905,7 @@ test("Native rename uncertainty stays with capable owner A while B saves, and re
 			name: "Owner B explicit native name",
 		},
 	]);
-	expect(posts[0].requestId).toMatch(/^[a-f0-9]{32}$/);
+	expect(posts[0].requestId).toMatch(/^t[a-f0-9]{32}$/);
 	expect(posts[1].requestId).not.toBe(posts[0].requestId);
 	const counts = await (
 		await context.request.get("/api/fixture/dispatches")

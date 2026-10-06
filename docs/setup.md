@@ -152,6 +152,12 @@ npm start -- status
 npm start -- pair
 ```
 
+`status` reports terminal discovery health and the live-terminal count separately
+from gateway readiness. Discovery retries automatically. Missing or refused owned
+bridge sockets are reclaimed with inode/replacement checks; slow or unresponsive
+bridges are never deleted. Incomplete discovery temporarily disables browser
+mutations rather than trusting a partial owner list.
+
 Open the reported HTTPS address, enter the six-digit code and tap **Pair this device**.
 Then open **Live sessions** and choose a terminal; see [usage](usage.md) for controls.
 

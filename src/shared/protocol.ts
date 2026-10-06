@@ -23,6 +23,7 @@ export const limits = {
 } as const;
 const opaque = "^[a-f0-9]{32}$";
 const id = Type.String({ pattern: opaque });
+const requestId = Type.String({ pattern: "^(?:[a-f0-9]{32}|t[a-f0-9]{32})$" });
 const text = Type.String({ maxLength: limits.blockText });
 const ToolSchema = Type.Object({
 	name: Type.String({ maxLength: 100 }),
@@ -191,6 +192,7 @@ export const SummarySchema = Type.Object(
 	{
 		instance: id,
 		generation: id,
+		timedInput: Type.Optional(Type.Literal(true)),
 		project: Type.String({ maxLength: 120 }),
 		cwd: Type.Optional(
 			Type.String({ minLength: 1, maxLength: limits.cwdCharacters }),
@@ -247,7 +249,12 @@ export const StatusSchema = Type.Object(
 	{ additionalProperties: false },
 );
 export type Status = Static<typeof StatusSchema>;
+export type DiscoveryHealth = {
+	state: "ready" | "timeout" | "peer-limit" | "unavailable";
+	liveTerminals: number;
+};
 export type View = {
+	discovery?: DiscoveryHealth;
 	connection: "connected" | "disconnected" | "unavailable";
 	sessions: (Summary & { conflict: boolean })[];
 	selected?: Identity;
@@ -269,7 +276,7 @@ export const BrowserImageSchema = Type.Object(
 	{
 		instance: id,
 		generation: id,
-		requestId: id,
+		requestId,
 		text: Type.String({ maxLength: 16_000 }),
 		images: Type.Array(
 			Type.Object(
@@ -288,7 +295,7 @@ export const ImageRequestSchema = Type.Object(
 	{
 		instance: id,
 		generation: id,
-		requestId: id,
+		requestId,
 		text: Type.String({ maxLength: 16_000 }),
 		images: Type.Array(
 			Type.Object(
@@ -310,7 +317,7 @@ export const TextRequestSchema = Type.Object(
 	{
 		instance: id,
 		generation: id,
-		requestId: id,
+		requestId,
 		text: Type.String({ minLength: 1, maxLength: 16_000 }),
 		deliverAs: Type.Optional(
 			Type.Union([Type.Literal("steer"), Type.Literal("followUp")]),
@@ -320,7 +327,7 @@ export const TextRequestSchema = Type.Object(
 );
 export type TextRequest = Static<typeof TextRequestSchema>;
 export const StopRequestSchema = Type.Object(
-	{ instance: id, generation: id, requestId: id },
+	{ instance: id, generation: id, requestId },
 	{ additionalProperties: false },
 );
 export type StopRequest = Static<typeof StopRequestSchema>;
@@ -378,7 +385,7 @@ export const ControlSchema = Type.Union([
 export type ControlRequest = Static<typeof ControlSchema>;
 export const ReceiptSchema = Type.Object(
 	{
-		requestId: id,
+		requestId,
 		status: Type.Union([
 			Type.Literal("dispatched"),
 			Type.Literal("uncertain"),

@@ -16,6 +16,7 @@ type Reply = {
 	origin?: string;
 	port?: number;
 	authDirectory?: string;
+	discovery?: import("../shared/protocol.js").DiscoveryHealth;
 	code?: string;
 	expires?: number;
 	devices?: { id: string; created: number; expires: number }[];
@@ -141,7 +142,7 @@ async function request(
 					"state",
 					"origin",
 					"port",
-					...(command === "status" ? ["authDirectory"] : []),
+					...(command === "status" ? ["authDirectory", "discovery"] : []),
 					...(command === "pair"
 						? ["code", "expires"]
 						: command === "devices"
@@ -176,6 +177,16 @@ async function request(
 							value.authDirectory.includes("\0") ||
 							!isAbsolute(value.authDirectory) ||
 							realpathSync(value.authDirectory) !== value.authDirectory)) ||
+					(value.discovery !== undefined &&
+						(!object(value.discovery) ||
+							Object.keys(value.discovery).sort().join() !==
+								"liveTerminals,state" ||
+							!["ready", "timeout", "peer-limit", "unavailable"].includes(
+								String(value.discovery.state),
+							) ||
+							!Number.isInteger(value.discovery.liveTerminals) ||
+							Number(value.discovery.liveTerminals) < 0 ||
+							Number(value.discovery.liveTerminals) > 32)) ||
 					(value.port !== undefined &&
 						(!Number.isInteger(value.port) ||
 							Number(value.port) < 1024 ||
@@ -453,7 +464,10 @@ async function owner(runtime: string, config: Config) {
 				}
 				const reply: Reply = { state, ...config };
 				if (state === "ready") {
-					if (command === "status") reply.authDirectory = authDirectory;
+					if (command === "status") {
+						reply.authDirectory = authDirectory;
+						reply.discovery = app!.discovery();
+					}
 					if (command === "pair")
 						Object.assign(reply, app!.pairing.issueCode());
 					if (command === "devices") reply.devices = app!.pairing.devices();
@@ -803,7 +817,14 @@ export async function managedCli(args: string[]) {
 			console.log(
 				`Pi companion: ${reply.state}${reply.state === "ready" ? ` ${reply.origin}` : ""}`,
 			);
-			if (["unmanaged", "unavailable"].includes(reply.state))
+			if (reply.discovery)
+				console.log(
+					`Terminal discovery: ${reply.discovery.state}; ${reply.discovery.liveTerminals} live terminals`,
+				);
+			if (
+				["unmanaged", "unavailable"].includes(reply.state) ||
+				(reply.discovery && reply.discovery.state !== "ready")
+			)
 				process.exitCode = 1;
 		} else if (command === "pair") {
 			if (lockFree(runtime)) fail("stopped");

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { timedRequestId } from "../../src/shared/request-id.js";
 import type {
 	Command,
 	Identity,
@@ -50,10 +51,12 @@ function slashGuidance(
 		return "This command takes no arguments.";
 }
 
-function createRequestId() {
-	return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
-		byte.toString(16).padStart(2, "0"),
+function createRequestId(timed = false) {
+	const random = Array.from(
+		crypto.getRandomValues(new Uint8Array(16)),
+		(byte) => byte.toString(16).padStart(2, "0"),
 	).join("");
+	return timed ? timedRequestId(random) : random;
 }
 async function readReceipt(response: Response, requestId: string) {
 	const receipt = (await response.json()) as Receipt;
@@ -313,7 +316,9 @@ export function useBrowserSession({
 			identity: { ...editor.identity },
 			name: editor.name,
 			message: "",
-			requestId: createRequestId(),
+			requestId: createRequestId(
+				liveSummary(editor.identity)?.timedInput === true,
+			),
 		};
 		const epoch = controlEpoch.current;
 		const key = identityKey(attempt.identity);
@@ -581,7 +586,7 @@ export function useBrowserSession({
 			? stopAttempt
 			: {
 					identity: selected,
-					requestId: createRequestId(),
+					requestId: createRequestId(selectedSummary?.timedInput === true),
 					uncertain: false,
 				};
 		if (
@@ -853,7 +858,7 @@ export function useBrowserSession({
 			? outstanding
 			: {
 					identity: selected,
-					requestId: createRequestId(),
+					requestId: createRequestId(selectedSummary?.timedInput === true),
 					text: draft,
 					deliverAs: mode,
 					files: attachment,
@@ -994,7 +999,7 @@ export function useBrowserSession({
 							: pending.deliverAs === "followUp"
 								? "Follow-up requested"
 								: "Pending"
-						: `Rejected: ${receipt.reason === "terminal-draft" ? "Clear or send the unsent draft in the Pi terminal first" : receipt.reason === "model-no-images" ? "Current Pi model does not support images" : receipt.reason === "images-blocked" ? "Pi settings block images" : receipt.reason === "image-policy-unknown" ? "Pi model/image policy unavailable or unknown" : receipt.reason}`,
+						: `Rejected: ${receipt.reason === "ledger-full" ? "Request capacity reached. Your draft is safe. If this persists, reload the bridge in the idle Pi terminal" : receipt.reason === "stale" ? "This request is no longer valid and was not resent. Check Pi before sending again" : receipt.reason === "terminal-draft" ? "Clear or send the unsent draft in the Pi terminal first" : receipt.reason === "model-no-images" ? "Current Pi model does not support images" : receipt.reason === "images-blocked" ? "Pi settings block images" : receipt.reason === "image-policy-unknown" ? "Pi model/image policy unavailable or unknown" : receipt.reason}`,
 					receipt.status === "dispatched",
 				);
 				const key = `${pending.identity.instance}:${pending.identity.generation}`;

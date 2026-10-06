@@ -3722,9 +3722,12 @@ for (const access of [
 			});
 			await expect(home).toBeVisible();
 			await expect(
-				home.getByText("Waiting for live sessions from the gateway.", {
-					exact: true,
-				}),
+				home.getByText(
+					"Connecting to the gateway. Sessions will appear automatically.",
+					{
+						exact: true,
+					},
+				),
 			).toBeVisible();
 			const transport = (open: boolean) =>
 				page.evaluate(
@@ -3739,15 +3742,18 @@ for (const access of [
 			await transport(true);
 			await expect(
 				home.getByText(
-					"No live sessions. Load the companion extension in your terminal.",
+					"No live sessions. Open Pi in a terminal with the Companion extension loaded.",
 					{ exact: true },
 				),
 			).toBeVisible();
 			await transport(false);
 			await expect(
-				home.getByText("Waiting for live sessions from the gateway.", {
-					exact: true,
-				}),
+				home.getByText(
+					"Connecting to the gateway. Sessions will appear automatically.",
+					{
+						exact: true,
+					},
+				),
 			).toBeVisible();
 			await expect(
 				page.getByText("Disconnected", { exact: true }),

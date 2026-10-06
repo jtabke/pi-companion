@@ -47,6 +47,7 @@ import {
 } from "../shared/protocol.js";
 declare module "fastify" {
 	interface FastifyInstance {
+		discovery: () => import("../shared/protocol.js").DiscoveryHealth;
 		pairing: Pick<
 			ReturnType<typeof authentication>,
 			"issueCode" | "devices" | "revoke"
@@ -143,7 +144,9 @@ export async function createGateway(options: {
 		devices: () => authority(() => auth.devices()),
 		revoke: (id: string) => authority(() => auth.revoke(id)),
 	};
-	const gateway = app.decorate("pairing", pairing);
+	const gateway = app
+		.decorate("pairing", pairing)
+		.decorate("discovery", () => discoveryHealth);
 	app.addHook("onRequest", async (req, reply) => {
 		reply
 			.header("Cache-Control", "no-store")
@@ -276,6 +279,10 @@ export async function createGateway(options: {
 	};
 	let peers: Awaited<ReturnType<typeof discover>>["peers"] = [],
 		unavailable = false;
+	let discoveryHealth: import("../shared/protocol.js").DiscoveryHealth = {
+		state: "unavailable",
+		liveTerminals: 0,
+	};
 	const scopes = new Map<string, Scope>();
 	const scopeKey = (selected?: Identity) =>
 		selected ? `${selected.instance}:${selected.generation}` : "list";
@@ -452,6 +459,7 @@ export async function createGateway(options: {
 				scope.replay.length = 0;
 			publish(scope, {
 				sessions,
+				discovery: discoveryHealth,
 				...(selected
 					? {
 							selected,
@@ -482,7 +490,11 @@ export async function createGateway(options: {
 			const result = await discover(options.runtime);
 			if (stopped) return;
 			peers = result.peers;
-			unavailable = result.overLimit;
+			unavailable = result.overLimit || !!result.failure;
+			discoveryHealth = {
+				state: result.failure ?? (result.overLimit ? "peer-limit" : "ready"),
+				liveTerminals: peers.length,
+			};
 			control.reconcile(
 				peers.map((p) => p.registration),
 				sessions,
@@ -490,6 +502,7 @@ export async function createGateway(options: {
 		} catch {
 			peers = [];
 			unavailable = true;
+			discoveryHealth = { state: "unavailable", liveTerminals: 0 };
 		}
 		try {
 			// Only readers' selected conversations decode native branch/media. One fetch per shared scope.
@@ -637,7 +650,12 @@ export async function createGateway(options: {
 		rename = false,
 	) {
 		const fresh = await discover(options.runtime);
-		if (stopped || fresh.overLimit || mutationSessionExpired(cookie))
+		if (
+			stopped ||
+			fresh.overLimit ||
+			fresh.failure ||
+			mutationSessionExpired(cookie)
+		)
 			return undefined;
 		controlOwners = fresh.peers.map((p) => p.registration);
 		const current = fresh.peers.find((p) => same(p.registration, identity));

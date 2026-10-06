@@ -316,6 +316,7 @@ export function createBridge(
 					);
 					status.summary.pending = ctx.hasPendingMessages();
 					status.summary.busyText = typeof send === "function";
+					status.summary.timedInput = true;
 					status.summary.rename = typeof setSessionName === "function";
 					status.summary.needsInput = questionOwner.state().pending.length > 0;
 					const stop = dispatch.observation();

@@ -433,7 +433,11 @@ it("revoke blocks every not-yet-forwarded input after discovery and releases adm
 								requestId: "a".repeat(32),
 								...(route === "/api/stop" ? {} : { text: "do not dispatch" }),
 								...(route === "/api/image"
-									? { mime: "image/png", source: png.toString("base64") }
+									? {
+											images: [
+												{ mime: "image/png", source: png.toString("base64") },
+											],
+										}
 									: {}),
 							};
 			const pending = f.post(route, body, cookie);

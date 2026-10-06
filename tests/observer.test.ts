@@ -13,6 +13,7 @@ import * as peerCalls from "../src/gateway/peer.js";
 import {
 	mkdtempSync,
 	readFileSync,
+	readdirSync,
 	renameSync,
 	chmodSync,
 	rmSync,
@@ -1597,7 +1598,7 @@ describe("native snapshot and private resources", () => {
 		}
 	});
 
-	it("discovers live terminals despite more than 32 stale registrations without deleting them", async () => {
+	it("discovers live terminals and reclaims more than 32 definitively dead registrations", async () => {
 		const path = runtime(),
 			bridge = createBridge(path);
 		try {
@@ -1614,14 +1615,8 @@ describe("native snapshot and private resources", () => {
 			expect(result.overLimit).toBe(false);
 			expect(result.peers.map((peer) => peer.registration)).toEqual([live]);
 			expect(
-				JSON.parse(
-					readFileSync(join(path, `b-${"0".repeat(32)}.json`), "utf8"),
-				),
-			).toEqual({
-				...live,
-				instance: "0".repeat(32),
-				generation: "f".repeat(32),
-			});
+				readdirSync(path).filter((name) => name.endsWith(".json")),
+			).toEqual([`b-${live.instance}.json`]);
 			await bridge.close();
 			expect(await discover(path)).toEqual({ overLimit: false, peers: [] });
 		} finally {
@@ -1639,7 +1634,11 @@ describe("native snapshot and private resources", () => {
 			expect(atLimit.overLimit).toBe(false);
 			expect(atLimit.peers).toHaveLength(32);
 			await bridges[32]!.start(context());
-			expect(await discover(path)).toEqual({ overLimit: true, peers: [] });
+			expect(await discover(path)).toEqual({
+				overLimit: true,
+				peers: [],
+				failure: "peer-limit",
+			});
 			await bridges[32]!.close();
 			const recovered = await discover(path);
 			expect(recovered.overLimit).toBe(false);
@@ -3303,6 +3302,13 @@ describe("C4-A generation-owned text and browser control", () => {
 						requestId: "a".repeat(32),
 					},
 				});
+			const healthy = await discover(path);
+			vi.spyOn(peerCalls, "discover").mockResolvedValueOnce({
+				...healthy,
+				failure: "timeout",
+			});
+			expect((await send()).statusCode).toBe(409); // Partial discovery is never mutation authority.
+			vi.restoreAllMocks();
 			await other.start(otherCtx); // Gateway's periodic cache has not discovered this conflict.
 			expect((await send()).statusCode).toBe(409);
 			expect((await claim()).statusCode).toBe(409);

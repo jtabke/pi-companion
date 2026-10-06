@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import {
+	requestIssuedAt,
+	requestLifetimeMs,
+	requestFutureSkewMs,
+} from "../shared/request-id.js";
 import { nativeCommands } from "./commands.js";
 import type { NativeCommands } from "./native-commands.js";
 import type {
@@ -15,7 +20,8 @@ import type {
 	Summary,
 } from "../shared/protocol.js";
 
-// One ledger per actual bridge generation. Never evict an attempted ID and reinvoke it.
+// Legacy IDs remain generation-long. Timed IDs expire before their receipts retire,
+// so eviction can never turn an old retry into a new native attempt.
 export function nativeInput(
 	identity: Identity,
 	ctx: ExtensionContext,
@@ -34,6 +40,8 @@ export function nativeInput(
 			receipt: Receipt;
 		}
 	>();
+	let legacyEntries = 0,
+		observedTime = Date.now();
 	let stop: Summary["stop"],
 		sequence = 0,
 		attemptedAt = -1;
@@ -102,6 +110,19 @@ export function nativeInput(
 			request.generation !== identity.generation
 		)
 			return reject("stale");
+		const now = (observedTime = Math.max(observedTime, Date.now()));
+		const issuedAt = requestIssuedAt(request.requestId);
+		if (
+			issuedAt !== undefined &&
+			(issuedAt + requestLifetimeMs <= now ||
+				issuedAt > now + requestFutureSkewMs)
+		)
+			return reject("stale");
+		for (const id of ledger.keys()) {
+			const issued = requestIssuedAt(id);
+			if (issued !== undefined && issued + requestLifetimeMs <= now)
+				ledger.delete(id);
+		}
 		// JSON preserves lone UTF-16 surrogates that raw UTF-8 encoding replaces.
 		const hash = createHash("sha256")
 			.update(
@@ -130,7 +151,12 @@ export function nativeInput(
 			return prior.kind === kind && prior.hash === hash
 				? prior.receipt
 				: reject("mismatch");
-		if (ledger.size >= 256) return reject("ledger-full");
+		if (
+			issuedAt === undefined
+				? legacyEntries >= 256
+				: ledger.size - legacyEntries >= 4096
+		)
+			return reject("ledger-full");
 		let imagePolicy: Receipt["reason"] | undefined;
 		if (image) {
 			try {
@@ -202,6 +228,7 @@ export function nativeInput(
 		if (reason) {
 			const receipt = reject(reason);
 			ledger.set(request.requestId, { kind, hash, receipt });
+			if (issuedAt === undefined) legacyEntries++;
 			return receipt;
 		}
 		// Policy reads above may call host code. Recheck captured native identity at the attempt boundary.
@@ -212,6 +239,7 @@ export function nativeInput(
 			reason: "outcome-unconfirmed",
 		};
 		ledger.set(request.requestId, { kind, hash, receipt }); // Before attempting either void public call.
+		if (issuedAt === undefined) legacyEntries++;
 		if (stopping) {
 			stop = "stopping";
 			attemptedAt = sequence; // Synchronous callbacks must see the marker and receipt.

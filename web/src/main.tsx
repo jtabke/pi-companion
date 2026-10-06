@@ -50,6 +50,7 @@ function SessionList({
 	sessions,
 	selected,
 	connected,
+	discovery,
 	onChoose,
 	selectedModel,
 	renameAction,
@@ -57,6 +58,7 @@ function SessionList({
 	sessions: View["sessions"];
 	selected?: Identity;
 	connected: boolean;
+	discovery?: View["discovery"];
 	onChoose: (instance: string) => void;
 	selectedModel?: string;
 	renameAction?: React.ReactNode;
@@ -80,7 +82,9 @@ function SessionList({
 	return (
 		<nav aria-label="Terminal sessions">
 			<p className="session-list-note muted">
-				{sessions.length} live terminals
+				{discovery && discovery.state !== "ready"
+					? "Checking live terminals…"
+					: `${sessions.length} live terminals`}
 			</p>
 			{[...directories].map(([cwd, group]) => (
 				<section
@@ -184,9 +188,15 @@ function SessionList({
 			))}
 			{!sessions.length && (
 				<p role="status">
-					{connected
-						? "No live sessions. Load the companion extension in your terminal."
-						: "Waiting for live sessions from the gateway."}
+					{discovery?.state === "timeout"
+						? "A terminal is taking too long to respond. Retrying automatically; your drafts are safe."
+						: discovery?.state === "peer-limit"
+							? "More than 32 terminals are live. Close an unused terminal; sessions will return automatically."
+							: discovery?.state === "unavailable"
+								? "Terminal discovery is recovering. Retrying automatically; your drafts are safe."
+								: connected || discovery?.state === "ready"
+									? "No live sessions. Open Pi in a terminal with the Companion extension loaded."
+									: "Connecting to the gateway. Sessions will appear automatically."}
 				</p>
 			)}
 		</nav>
@@ -411,6 +421,7 @@ function App() {
 						)}
 					<SessionList
 						sessions={view.sessions}
+						discovery={view.discovery}
 						selected={selected}
 						selectedModel={modelName}
 						renameAction={
@@ -590,6 +601,7 @@ function App() {
 					<h2>Live sessions</h2>
 					<SessionList
 						sessions={view.sessions}
+						discovery={view.discovery}
 						connected={
 							transport === "Connected" && view.connection !== "unavailable"
 						}

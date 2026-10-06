@@ -1,5 +1,5 @@
 import { request, type IncomingMessage } from "node:http";
-import { readdirSync } from "node:fs";
+import { readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Value } from "@sinclair/typebox/value";
 import { ownerRead, ownerStat } from "../shared/runtime.js";
@@ -28,6 +28,7 @@ export function peerResponse(
 	runtime: string,
 	peer: Registration,
 	path: string,
+	signal?: AbortSignal,
 ): Promise<IncomingMessage> {
 	ownerStat(runtime, "directory");
 	const socketPath = join(runtime, `b-${peer.generation}.sock`);
@@ -40,11 +41,19 @@ export function peerResponse(
 				method: "GET",
 				headers: { "x-c2-capability": peer.capability },
 				agent: false,
+				signal,
 			},
 			resolve,
 		);
 		req.on("error", reject);
-		req.setTimeout(2500, () => req.destroy(new Error("Bridge timed out")));
+		// Discovery's whole-response deadline must include silent headers/bodies.
+		// An earlier idle destroy can surface only as ECONNRESET on an open body.
+		if (!signal)
+			req.setTimeout(2500, () =>
+				req.destroy(
+					Object.assign(new Error("Bridge timed out"), { code: "ETIMEDOUT" }),
+				),
+			);
 		req.end();
 	});
 }
@@ -53,8 +62,9 @@ async function readJson(
 	peer: Registration,
 	path: string,
 	max: number,
+	signal?: AbortSignal,
 ) {
-	const res = await peerResponse(runtime, peer, path);
+	const res = await peerResponse(runtime, peer, path, signal);
 	if (res.statusCode !== 200) {
 		res.destroy();
 		throw new Error("Bridge unavailable");
@@ -94,8 +104,15 @@ export async function readSnapshot(
 export async function readStatus(
 	runtime: string,
 	peer: Registration,
+	signal?: AbortSignal,
 ): Promise<Status> {
-	const data = await readJson(runtime, peer, "/status", limits.statusBytes);
+	const data = await readJson(
+		runtime,
+		peer,
+		"/status",
+		limits.statusBytes,
+		signal,
+	);
 	if (
 		!Value.Check(StatusSchema, data) ||
 		data.summary.instance !== peer.instance ||
@@ -104,34 +121,89 @@ export async function readStatus(
 		throw new Error("Bridge identity mismatch");
 	return data;
 }
-export async function discover(runtime: string) {
+export type Discovery = {
+	overLimit: boolean;
+	peers: { registration: Registration; status: Status }[];
+	failure?: "timeout" | "peer-limit";
+};
+export const discoveryBudgetMs = 3500;
+export async function discover(runtime: string): Promise<Discovery> {
+	const deadline = Date.now() + discoveryBudgetMs;
 	ownerStat(runtime, "directory");
 	const files = readdirSync(runtime).filter((name) =>
 		/^b-[a-f0-9]{32}\.json$/.test(name),
 	);
-	const peers: { registration: Registration; status: Status }[] = [];
+	const peers: Discovery["peers"] = [];
+	const signal = AbortSignal.timeout(discoveryBudgetMs);
+	let timedOut = false;
 	// Limit reachable identities, not leftover files from abruptly closed terminals.
 	// Batch reachability checks to bound concurrent sockets; no PID or mtime inference.
 	for (let offset = 0; offset < files.length; offset += limits.peers) {
+		if (signal.aborted || Date.now() >= deadline)
+			return { overLimit: false, peers: [], failure: "timeout" };
 		await Promise.all(
 			files.slice(offset, offset + limits.peers).map(async (name) => {
 				try {
-					const data: unknown = JSON.parse(
-						ownerRead(join(runtime, name), 1024),
-					);
+					const recordPath = join(runtime, name);
+					const recordStat = ownerStat(recordPath, "file");
+					const record = ownerRead(recordPath, 1024);
+					const data: unknown = JSON.parse(record);
 					if (
 						!Value.Check(RegistrationSchema, data) ||
 						name !== `b-${data.instance}.json`
 					)
 						return;
-					const status = await readStatus(runtime, data);
-					peers.push({ registration: data, status });
+					const socketPath = join(runtime, `b-${data.generation}.sock`);
+					let socketStat: ReturnType<typeof ownerStat> | undefined;
+					try {
+						try {
+							socketStat = ownerStat(socketPath, "socket");
+						} catch (error) {
+							if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+								throw error;
+						}
+						const status = await readStatus(runtime, data, signal);
+						peers.push({ registration: data, status });
+					} catch (error) {
+						if (
+							(error as NodeJS.ErrnoException).code === "ETIMEDOUT" ||
+							signal.aborted
+						)
+							timedOut = true;
+						// Only a missing/refused socket proves this generation is dead.
+						// Never prune timeouts, schema/capability failures or replacement inodes.
+						if (
+							!["ENOENT", "ECONNREFUSED"].includes(
+								(error as NodeJS.ErrnoException).code ?? "",
+							)
+						)
+							return;
+						if (socketStat) {
+							const current = ownerStat(socketPath, "socket");
+							if (
+								current.ino !== socketStat.ino ||
+								current.dev !== socketStat.dev
+							)
+								return;
+							unlinkSync(socketPath);
+						}
+						const current = ownerStat(recordPath, "file");
+						if (
+							current.ino === recordStat.ino &&
+							current.dev === recordStat.dev &&
+							ownerRead(recordPath, 1024) === record
+						)
+							unlinkSync(recordPath);
+					}
 				} catch {
 					/* Invalid, stale or unreachable registrations are never attached. */
 				}
 			}),
 		);
-		if (peers.length > limits.peers) return { overLimit: true, peers: [] };
+		if (timedOut || signal.aborted || Date.now() >= deadline)
+			return { overLimit: false, peers: [], failure: "timeout" };
+		if (peers.length > limits.peers)
+			return { overLimit: true, peers: [], failure: "peer-limit" };
 	}
 	return { overLimit: false, peers };
 }

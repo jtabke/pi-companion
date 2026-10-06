@@ -391,6 +391,9 @@ it("cold start is actual HTTP-ready, terminal-only explicit pair authenticates, 
 		expect((await http(f.port)).status).toBe(200);
 		expect((await http(f.port)).body).toContain('<div id="root">');
 		expect((await http(f.port, "/api/snapshot")).status).toBe(401);
+		expect((await f.run(["status"])).out).toContain(
+			"Terminal discovery: ready; 1 live terminals",
+		);
 		const pair = await f.run(["pair"]);
 		expect(pair.code).toBe(1);
 		expect(pair.err).toContain("pair-requires-local-terminal");
@@ -683,7 +686,9 @@ it("starting is redacted until HTTP and exact foreground route are both ready; s
 		await exited(caller.child);
 		await expect
 			.poll(async () => (await f.run(["status"])).out, { timeout: 5000 })
-			.toBe(`Pi companion: ready ${origin}\n`);
+			.toBe(
+				`Pi companion: ready ${origin}\nTerminal discovery: ready; 0 live terminals\n`,
+			);
 		expect((await f.run(["stop"])).code).toBe(0);
 		const owner = f.spawnCli(["start"], { C2_MANAGED_OWNER: "1" }, true);
 		await expect
@@ -1266,7 +1271,7 @@ it("no-argument restart preserves observed origin/port/runtime/auth and survivin
 		expect(snapshot.status).toBe(200);
 		expect((await discover(f.runtime)).peers).toHaveLength(1);
 		expect((await f.run(["status"])).out).toBe(
-			`Pi companion: ready ${origin}\n`,
+			`Pi companion: ready ${origin}\nTerminal discovery: ready; 1 live terminals\n`,
 		);
 		f.mode("early-exit");
 		const failed = await f.run(["restart"]);

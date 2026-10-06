@@ -66,7 +66,11 @@ remains available.
 Forwarding is not proof that Pi consumed or completed input. If a response is lost,
 inspect Pi and the outcome receipt before using **Retry**. A retry retains the original
 request ID, text and mode; reconnecting never silently resends it. Native commands
-have a separate no-retry rule below.
+have a separate no-retry rule below. New browser input IDs expire after ten minutes:
+check Pi before making a new deliberate request if an outstanding retry expires.
+Receipts retire automatically without changing the terminal generation or browser
+control; expired requests can never execute again. Older browser IDs retain their
+generation-long deduplication protection.
 
 **Stop** requests that Pi stop its current parent activity. Parent idle does not
 confirm cancellation of every queued input or background job.
